@@ -148,51 +148,7 @@
         "reset_time": "Thời gian reset",
         "switch_to": "Chuyển sang tài khoản này",
         "actions": "Thao tác",
-        "device_fingerprint": "Vân Tay Thiết Bị",
         "show_all_quotas": "Hiển thị tất cả hạn ngạch",
-        "device_fingerprint_dialog": {
-            "title": "Vân Tay Thiết Bị",
-            "operations": "Các Thao Tác Vân Tay Thiết Bị",
-            "generate_and_bind": "Tạo và Liên Kết",
-            "restore_original": "Khôi Phục Bản Gốc",
-            "open_storage_directory": "Mở Thư Mục Lưu Trữ",
-            "current_storage": "Lưu Trữ Hiện Tại",
-            "effective": "Hiệu Lực",
-            "current_storage_desc": "Đọc từ storage.json (cập nhật sau khi áp dụng liên kết khi chuyển tài khoản)",
-            "account_binding": "Liên Kết Tài Khoản",
-            "pending_application": "Đang Chờ Áp Dụng",
-            "account_binding_desc": "Được lưu như liên kết sau tạo/khôi phục, ghi vào storage.json khi chuyển tài khoản",
-            "historical_fingerprints": "Vân Tay Lịch Sử (tùy chọn khôi phục/xóa)",
-            "no_history": "Không Có Lịch Sử",
-            "current": "Hiện Tại",
-            "restore": "Khôi Phục",
-            "delete_version": "Xóa phiên bản này",
-            "confirm_generate_title": "Xác nhận tạo và liên kết?",
-            "confirm_generate_desc": "Sẽ tạo một bộ vân tay thiết bị mới và đặt làm vân tay hiện tại. Xác nhận tiếp tục?",
-            "confirm_restore_title": "Xác nhận khôi phục vân tay gốc?",
-            "confirm_restore_desc": "Sẽ khôi phục vân tay gốc và ghi đè lên vân tay hiện tại. Xác nhận tiếp tục?",
-            "cancel": "Hủy",
-            "confirm": "Xác Nhận",
-            "processing": "Đang Xử Lý...",
-            "loading": "Đang Tải...",
-            "failed_to_load_device_info": "Không thể tải thông tin thiết bị",
-            "generation_failed": "Tạo thất bại",
-            "binding_failed": "Liên kết thất bại",
-            "restoration_failed": "Khôi phục thất bại",
-            "deletion_failed": "Xóa thất bại",
-            "directory_open_failed": "Không thể mở thư mục",
-            "generated_and_bound": "Đã tạo và liên kết",
-            "restored": "Đã khôi phục",
-            "deleted": "Đã xóa",
-            "directory_opened": "Đã mở thư mục lưu trữ",
-            "original_fingerprint_not_found": "Không tìm thấy vân tay gốc",
-            "storage_json_not_found": "Không tìm thấy storage.json, vui lòng đảm bảo Antigravity đã được chạy để tạo tệp cấu hình"
-        },
-        "warmup_all": "Làm nóng (Warmup) Tất cả",
-        "warmup_selected": "Làm nóng ({{count}})",
-        "warmup_this": "Làm nóng tài khoản này",
-        "warmup_now": "Làm nóng Ngay",
-        "warmup_batch_triggered": "Đã kích hoạt làm nóng cho {{count}} tài khoản",
         "quota_protected": "Được bảo vệ",
         "details": {
             "title": "Chi tiết Hạn mức",
@@ -206,9 +162,9 @@
         "add": {
             "title": "Thêm Tài khoản",
             "tabs": {
-                "oauth": "OAuth",
-                "token": "Refresh Token",
-                "import": "Nhập DB"
+                "oauth": "Device Flow",
+                "token": "GitHub Token",
+                "import": "Import"
             },
             "oauth": {
                 "recommend": "Khuyên dùng",
@@ -254,6 +210,17 @@
             "oauth_error": "OAuth thất bại: {{error}}",
             "status": {
                 "error_token": "Vui lòng nhập Refresh Token"
+            },
+            "device_flow": {
+                "title": "GitHub Device Flow Login",
+                "start": "Start GitHub Login",
+                "code_label": "Enter this code on GitHub:",
+                "open_github": "Open GitHub",
+                "waiting": "Waiting for authorization...",
+                "expires_in": "Expires in {{time}}",
+                "success": "Authorization successful!",
+                "expired": "Code expired. Please try again.",
+                "cancelled": "Login cancelled."
             }
         },
         "table": {
@@ -329,10 +296,6 @@
             "auto_sync": "Tự động cập nhật tài khoản hiện tại",
             "auto_sync_desc": "Tự động cập nhật thông tin tài khoản đang hoạt động theo chu kỳ",
             "sync_interval": "Chu kỳ đồng bộ (giây)"
-        },
-        "warmup": {
-            "title": "Làm nóng Thông minh (Smart Warmup)",
-            "desc": "Tự động theo dõi và kích hoạt làm nóng ngay khi hạn mức hồi phục về 100%, giữ cho model luôn sẵn sàng (warm)."
         },
         "quota_protection": {
             "title": "Bảo vệ Hạn mức",

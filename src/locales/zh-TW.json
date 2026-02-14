@@ -149,51 +149,7 @@
         "reset_time": "重置時間",
         "switch_to": "切換到此帳號",
         "actions": "操作",
-        "device_fingerprint": "裝置指紋",
         "show_all_quotas": "顯示所有配額",
-        "device_fingerprint_dialog": {
-            "title": "裝置指紋",
-            "operations": "裝置指紋操作",
-            "generate_and_bind": "生成並綁定",
-            "restore_original": "恢復原始",
-            "open_storage_directory": "開啟儲存目錄",
-            "current_storage": "目前儲存",
-            "effective": "已生效",
-            "current_storage_desc": "從 storage.json 讀取（切換帳號時應用綁定後更新）",
-            "account_binding": "帳號綁定",
-            "pending_application": "待應用",
-            "account_binding_desc": "生成/恢復後儲存為綁定，切換帳號時寫入 storage.json",
-            "historical_fingerprints": "歷史指紋（可選恢復/刪除）",
-            "no_history": "暫無歷史",
-            "current": "目前",
-            "restore": "恢復",
-            "delete_version": "刪除此版本",
-            "confirm_generate_title": "確認生成並綁定？",
-            "confirm_generate_desc": "將生成一套新的裝置指紋並設定為目前指紋。確認繼續？",
-            "confirm_restore_title": "確認恢復原始指紋？",
-            "confirm_restore_desc": "將恢復為原始指紋並覆蓋目前指紋。確認繼續？",
-            "cancel": "取消",
-            "confirm": "確認",
-            "processing": "處理中...",
-            "loading": "載入中...",
-            "failed_to_load_device_info": "載入裝置資訊失敗",
-            "generation_failed": "生成失敗",
-            "binding_failed": "綁定失敗",
-            "restoration_failed": "恢復失敗",
-            "deletion_failed": "刪除失敗",
-            "directory_open_failed": "無法開啟目錄",
-            "generated_and_bound": "已生成並綁定",
-            "restored": "已恢復",
-            "deleted": "已刪除",
-            "directory_opened": "已開啟裝置儲存目錄",
-            "original_fingerprint_not_found": "未找到原始指紋",
-            "storage_json_not_found": "未找到 storage.json，請確認 Antigravity 已運行過並生成配置文件"
-        },
-        "warmup_all": "一鍵預熱",
-        "warmup_selected": "預熱 ({{count}})",
-        "warmup_this": "預熱該帳號",
-        "warmup_now": "立即預熱",
-        "warmup_batch_triggered": "已成功為 {{count}} 個帳號觸發預熱任務",
         "quota_protected": "受保護",
         "details": {
             "title": "配額詳情",
@@ -207,9 +163,9 @@
         "add": {
             "title": "新增新帳號",
             "tabs": {
-                "oauth": "OAuth 授權",
-                "token": "Refresh Token",
-                "import": "從資料庫匯入"
+                "oauth": "Device Flow",
+                "token": "GitHub Token",
+                "import": "Import"
             },
             "oauth": {
                 "recommend": "推薦方式",
@@ -255,6 +211,17 @@
             "oauth_error": "OAuth 授權失敗: {{error}}",
             "status": {
                 "error_token": "請填寫 Refresh Token"
+            },
+            "device_flow": {
+                "title": "GitHub Device Flow Login",
+                "start": "Start GitHub Login",
+                "code_label": "Enter this code on GitHub:",
+                "open_github": "Open GitHub",
+                "waiting": "Waiting for authorization...",
+                "expires_in": "Expires in {{time}}",
+                "success": "Authorization successful!",
+                "expired": "Code expired. Please try again.",
+                "cancelled": "Login cancelled."
             }
         },
         "table": {
@@ -330,10 +297,6 @@
             "auto_sync": "自動獲取當前帳號",
             "auto_sync_desc": "定期自動重新整理當前活動帳號的資訊",
             "sync_interval": "同步間隔（分鐘）"
-        },
-        "warmup": {
-            "title": "智慧預熱",
-            "desc": "自動監控所有模型，當額度恢復到 100% 時立即觸發預熱，保持模型熱狀態"
         },
         "quota_protection": {
             "title": "配額保護",

@@ -46,20 +46,19 @@ function BackgroundTaskRunner() {
 
         let intervalId: ReturnType<typeof setTimeout> | null = null;
         const { auto_sync, sync_interval } = config;
-        const { syncAccountFromDb } = useAccountStore.getState();
 
         // Check if we just turned it on
         if (auto_sync && !prevAutoSyncRef.current) {
             console.log('[BackgroundTask] Auto-sync enabled, executing immediately...');
-            syncAccountFromDb();
+            refreshAllQuotas();
         }
         prevAutoSyncRef.current = auto_sync;
 
         if (auto_sync && sync_interval > 0) {
             console.log(`[BackgroundTask] Starting auto-sync account timer: ${sync_interval} mins`);
             intervalId = setInterval(() => {
-                console.log('[BackgroundTask] Auto-syncing current account from DB...');
-                syncAccountFromDb();
+                console.log('[BackgroundTask] Auto-syncing accounts...');
+                refreshAllQuotas();
             }, sync_interval * 60 * 1000);
         }
 

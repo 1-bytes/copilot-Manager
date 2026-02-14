@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ArrowRightLeft, RefreshCw, Trash2, Download, Info, Lock, Ban, Diamond, Gem, Circle, ToggleLeft, ToggleRight, Fingerprint, Sparkles, Tag, X, Check } from 'lucide-react';
+import { ArrowRightLeft, RefreshCw, Trash2, Download, Info, Lock, Ban, Diamond, Gem, Circle, ToggleLeft, ToggleRight, Tag, X, Check, Github } from 'lucide-react';
 import { Account } from '../../types/account';
 import { cn } from '../../utils/cn';
 import { useTranslation } from 'react-i18next';
@@ -21,7 +21,6 @@ interface AccountCardProps {
     onExport: () => void;
     onDelete: () => void;
     onToggleProxy: () => void;
-    onWarmup?: () => void;
     onUpdateLabel?: (label: string) => void;
 }
 
@@ -33,7 +32,7 @@ const DEFAULT_MODELS = Object.entries(MODEL_CONFIG).map(([id, config]) => ({
     Icon: config.Icon
 }));
 
-function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, isRefreshing, isSwitching = false, onSwitch, onRefresh, onViewDetails, onExport, onDelete, onToggleProxy, onViewDevice, onWarmup, onUpdateLabel }: AccountCardProps) {
+function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, isRefreshing, isSwitching = false, onSwitch, onRefresh, onViewDetails, onExport, onDelete, onToggleProxy, onUpdateLabel }: AccountCardProps) {
     const { t } = useTranslation();
     const { config, showAllQuotas } = useConfigStore();
     const isDisabled = Boolean(account.disabled);
@@ -71,9 +70,6 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
 
         // Get all models from account (source of truth)
         const accountModels = account.quota?.models?.map(m => {
-            // 注意：DEFAULT_MODELS 现在应该包含 shortLabel，我们需要确保它被正确映射
-            // 但 DEFAULT_MODELS 是从 MODEL_CONFIG 生成的，我们需要确保它包含 shortLabel
-            // 这里为了安全，直接从 MODEL_CONFIG 获取
             const fullConfig = MODEL_CONFIG[m.name.toLowerCase()];
             return {
                 id: m.name,
@@ -164,9 +160,22 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
                                     {t('accounts.forbidden').toUpperCase()}
                                 </span>
                             )}
+                            {/* GitHub login badge */}
+                            {(account as any).github_login && (
+                                <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 text-[9px] font-bold shadow-sm border border-gray-200/50 dark:border-gray-700/50">
+                                    <Github className="w-2.5 h-2.5" />
+                                    @{(account as any).github_login}
+                                </span>
+                            )}
+                            {/* Copilot plan badge */}
+                            {(account as any).copilot_plan && (
+                                <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 text-[9px] font-bold shadow-sm border border-emerald-200/50 dark:border-emerald-800/50">
+                                    {(account as any).copilot_plan.toUpperCase()}
+                                </span>
+                            )}
                             {/* 订阅类型徽章 */}
-                            {account.quota?.subscription_tier && (() => {
-                                const tier = account.quota.subscription_tier.toLowerCase();
+                            {account.quota?.plan && (() => {
+                                const tier = account.quota.plan.toLowerCase();
                                 if (tier.includes('ultra')) {
                                     return (
                                         <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-gradient-to-r from-purple-600 to-pink-600 text-white text-[9px] font-bold shadow-sm">
@@ -190,6 +199,12 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
                                     );
                                 }
                             })()}
+                            {/* GitHub token status */}
+                            {(account as any).github_token && (
+                                <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-green-50 dark:bg-green-900/30 text-green-600 dark:text-green-400 text-[9px] font-bold shadow-sm border border-green-200/50 dark:border-green-800/50">
+                                    TOKEN
+                                </span>
+                            )}
                             {/* 自定义标签 */}
                             {account.custom_label && (
                                 <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 text-[9px] font-bold shadow-sm border border-orange-200/50 dark:border-orange-800/50">
@@ -269,13 +284,6 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
                     >
                         <Info className="w-3.5 h-3.5" />
                     </button>
-                    <button
-                        className="p-1.5 text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg transition-all"
-                        onClick={(e) => { e.stopPropagation(); onViewDevice(); }}
-                        title={t('accounts.device_fingerprint')}
-                    >
-                        <Fingerprint className="w-3.5 h-3.5" />
-                    </button>
                     {/* 自定义标签按钮 */}
                     {onUpdateLabel && (
                         <button
@@ -299,16 +307,6 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
                     >
                         <ArrowRightLeft className={`w-3.5 h-3.5 ${isSwitching ? 'animate-spin' : ''}`} />
                     </button>
-                    {onWarmup && (
-                        <button
-                            className={`p-1.5 rounded-lg transition-all ${(isRefreshing || isDisabled) ? 'text-orange-600 bg-orange-50 dark:bg-orange-900/10 cursor-not-allowed' : 'text-gray-400 hover:text-orange-500 hover:bg-orange-50 dark:hover:bg-orange-900/30'}`}
-                            onClick={(e) => { e.stopPropagation(); onWarmup(); }}
-                            title={isDisabled ? t('accounts.disabled_tooltip') : (isRefreshing ? t('common.loading') : t('accounts.warmup_this', '预热该账号'))}
-                            disabled={isRefreshing || isDisabled}
-                        >
-                            <Sparkles className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-pulse' : ''}`} />
-                        </button>
-                    )}
                     <button
                         className={`p-1.5 rounded-lg transition-all ${isRefreshing
                             ? 'text-green-600 bg-green-50'

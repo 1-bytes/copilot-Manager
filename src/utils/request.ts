@@ -15,20 +15,18 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   'refresh_all_quotas': { url: '/api/accounts/refresh', method: 'POST' },
   'reorder_accounts': { url: '/api/accounts/reorder', method: 'POST' },
   'toggle_proxy_status': { url: '/api/accounts/:accountId/toggle-proxy', method: 'POST' },
-  'warm_up_accounts': { url: '/api/accounts/warmup', method: 'POST' },
-  'warm_up_all_accounts': { url: '/api/accounts/warmup', method: 'POST' },
-  'warm_up_account': { url: '/api/accounts/:accountId/warmup', method: 'POST' },
   'update_account_label': { url: '/api/accounts/:accountId/label', method: 'POST' },
   'export_accounts': { url: '/api/accounts/export', method: 'POST' },
-  'bind_device_profile': { url: '/api/accounts/:accountId/bind-device', method: 'POST' },
-  'get_device_profiles': { url: '/api/accounts/:accountId/device-profiles', method: 'GET' },
-  'list_device_versions': { url: '/api/accounts/:accountId/device-versions', method: 'GET' },
-  'preview_generate_profile': { url: '/api/accounts/device-preview', method: 'POST' },
-  'bind_device_profile_with_profile': { url: '/api/accounts/:accountId/bind-device-profile', method: 'POST' },
-  'restore_original_device': { url: '/api/accounts/restore-original', method: 'POST' },
-  'restore_device_version': { url: '/api/accounts/:accountId/device-versions/:versionId/restore', method: 'POST' },
-  'delete_device_version': { url: '/api/accounts/:accountId/device-versions/:versionId', method: 'DELETE' },
-  'open_device_folder': { url: '/api/system/open-folder', method: 'POST' },
+
+  // Device Flow (GitHub Copilot auth)
+  'start_device_flow': { url: '/api/accounts/device-flow/start', method: 'POST' },
+  'complete_device_flow': { url: '/api/accounts/device-flow/complete', method: 'POST' },
+  'cancel_device_flow': { url: '/api/accounts/device-flow/cancel', method: 'POST' },
+  'is_device_flow_active': { url: '/api/accounts/device-flow/active', method: 'GET' },
+  'get_device_flow_info': { url: '/api/accounts/device-flow/info', method: 'GET' },
+
+  // Import
+  'import_accounts': { url: '/api/accounts/import', method: 'POST' },
 
   // Proxy Control & Status
   'get_proxy_status': { url: '/api/proxy/status', method: 'GET' },
@@ -95,8 +93,6 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   'toggle_auto_launch': { url: '/api/system/autostart/toggle', method: 'POST' },
   'get_http_api_settings': { url: '/api/system/http-api/settings', method: 'GET' },
   'save_http_api_settings': { url: '/api/system/http-api/settings', method: 'POST' },
-  'get_antigravity_path': { url: '/api/system/antigravity/path', method: 'GET' },
-  'get_antigravity_args': { url: '/api/system/antigravity/args', method: 'GET' },
 
   // Cloudflared
   'cloudflared_install': { url: '/api/proxy/cloudflared/install', method: 'POST' },
@@ -109,23 +105,8 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   'check_for_updates': { url: '/api/system/updates/check', method: 'POST' },
   'update_last_check_time': { url: '/api/system/updates/touch', method: 'POST' },
 
-  // OAuth
-  'prepare_oauth_url': { url: '/api/auth/url', method: 'GET' },
-  'start_oauth_login': { url: '/api/accounts/oauth/start', method: 'POST' },
-  'complete_oauth_login': { url: '/api/accounts/oauth/complete', method: 'POST' },
-  'cancel_oauth_login': { url: '/api/accounts/oauth/cancel', method: 'POST' },
-  'submit_oauth_code': { url: '/api/accounts/oauth/submit-code', method: 'POST' },
-
-  // Import
-  'import_v1_accounts': { url: '/api/accounts/import/v1', method: 'POST' },
-  'import_from_db': { url: '/api/accounts/import/db', method: 'POST' },
-  'import_custom_db': { url: '/api/accounts/import/db-custom', method: 'POST' },
-  'sync_account_from_db': { url: '/api/accounts/sync/db', method: 'POST' },
-
   // System Extra & Cache
   'open_data_folder': { url: '/api/system/open-folder', method: 'POST' },
-  'clear_antigravity_cache': { url: '/api/system/cache/clear', method: 'POST' },
-  'get_antigravity_cache_paths': { url: '/api/system/cache/paths', method: 'GET' },
   'clear_log_cache': { url: '/api/system/logs/clear-cache', method: 'POST' },
 
   // Security / IP Management
@@ -145,6 +126,7 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   'check_ip_in_whitelist': { url: '/api/security/whitelist/check', method: 'GET' },
   'get_security_config': { url: '/api/security/config', method: 'GET' },
   'update_security_config': { url: '/api/security/config', method: 'POST' },
+
   // User Tokens
   'list_user_tokens': { url: '/api/user-tokens', method: 'GET' },
   'get_user_token_summary': { url: '/api/user-tokens/summary', method: 'GET' },

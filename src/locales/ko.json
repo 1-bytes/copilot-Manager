@@ -153,50 +153,7 @@
         "reset_time": "초기화 시간",
         "switch_to": "이 계정으로 전환",
         "actions": "작업",
-        "device_fingerprint": "디바이스 지문",
         "show_all_quotas": "모든 할당량 표시",
-        "device_fingerprint_dialog": {
-            "title": "디바이스 지문",
-            "operations": "디바이스 지문 작업",
-            "generate_and_bind": "생성 및 바인딩",
-            "restore_original": "원본 복원",
-            "open_storage_directory": "저장소 디렉토리 열기",
-            "current_storage": "현재 저장소",
-            "effective": "유효함",
-            "current_storage_desc": "storage.json에서 읽음 (계정 전환 시 바인딩 적용 후 업데이트됨)",
-            "account_binding": "계정 바인딩",
-            "pending_application": "적용 대기 중",
-            "account_binding_desc": "생성/복원 후 바인딩으로 저장됨, 계정 전환 시 storage.json에 기록됨",
-            "historical_fingerprints": "히스토리 지문 (선택적 복원/삭제)",
-            "no_history": "히스토리 없음",
-            "current": "현재",
-            "restore": "복원",
-            "delete_version": "이 버전 삭제",
-            "confirm_generate_title": "생성 및 바인딩 확인?",
-            "confirm_generate_desc": "새로운 디바이스 지문 세트를 생성하고 현재 지문으로 설정합니다. 계속하시겠습니까?",
-            "confirm_restore_title": "원본 지문 복원 확인?",
-            "confirm_restore_desc": "원본 지문으로 복원하고 현재 지문을 덮어씁니다. 계속하시겠습니까?",
-            "cancel": "취소",
-            "confirm": "확인",
-            "processing": "처리 중...",
-            "loading": "로딩 중...",
-            "failed_to_load_device_info": "디바이스 정보를 불러오는 데 실패했습니다",
-            "generation_failed": "생성 실패",
-            "binding_failed": "바인딩 실패",
-            "restoration_failed": "복원 실패",
-            "deletion_failed": "삭제 실패",
-            "directory_open_failed": "디렉토리를 열 수 없습니다",
-            "generated_and_bound": "생성 및 바인딩됨",
-            "restored": "복원됨",
-            "deleted": "삭제됨",
-            "directory_opened": "저장소 디렉토리가 열렸습니다",
-            "original_fingerprint_not_found": "원본 지문을 찾을 수 없습니다"
-        },
-        "warmup_all": "원클릭 웜업",
-        "warmup_selected": "웜업 ({{count}})",
-        "warmup_this": "이 계정 웜업",
-        "warmup_now": "지금 웜업",
-        "warmup_batch_triggered": "{{count}}개 계정에 대해 웜업 작업이 트리거되었습니다",
         "quota_protected": "보호됨",
         "details": {
             "title": "할당량 상세",
@@ -210,9 +167,9 @@
         "add": {
             "title": "계정 추가",
             "tabs": {
-                "oauth": "OAuth",
-                "token": "Refresh Token",
-                "import": "DB 가져오기"
+                "oauth": "Device Flow",
+                "token": "GitHub Token",
+                "import": "Import"
             },
             "oauth": {
                 "recommend": "추천",
@@ -258,6 +215,17 @@
             "oauth_error": "OAuth 실패: {{error}}",
             "status": {
                 "error_token": "Refresh Token을 입력해주세요"
+            },
+            "device_flow": {
+                "title": "GitHub Device Flow Login",
+                "start": "Start GitHub Login",
+                "code_label": "Enter this code on GitHub:",
+                "open_github": "Open GitHub",
+                "waiting": "Waiting for authorization...",
+                "expires_in": "Expires in {{time}}",
+                "success": "Authorization successful!",
+                "expired": "Code expired. Please try again.",
+                "cancelled": "Login cancelled."
             }
         },
         "table": {
@@ -333,10 +301,6 @@
             "auto_sync": "현재 계정 자동 동기화",
             "auto_sync_desc": "현재 활성 계정 정보를 주기적으로 자동 동기화",
             "sync_interval": "동기화 간격 (초)"
-        },
-        "warmup": {
-            "title": "스마트 웜업",
-            "desc": "모든 모델을 자동으로 모니터링하고 할당량이 100%에 도달하면 즉시 웜업을 트리거하여 모델을 따뜻하게 유지합니다."
         },
         "quota_protection": {
             "title": "할당량 보호",

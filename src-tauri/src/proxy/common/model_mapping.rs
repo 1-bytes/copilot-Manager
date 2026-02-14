@@ -1,164 +1,161 @@
-// 模型名称映射
+// Model name mapping for Copilot upstream
 use std::collections::HashMap;
 use once_cell::sync::Lazy;
 
-static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|| {
+/// Legacy alias mappings for Copilot.
+///
+/// Copilot natively supports standard model names (gpt-4o, claude-sonnet-4, etc.)
+/// so most requests pass through as-is. This table only handles legacy aliases
+/// that clients may still send.
+static LEGACY_ALIASES: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|| {
     let mut m = HashMap::new();
 
-    // 直接支持的模型
-    m.insert("claude-sonnet-4-5", "claude-sonnet-4-5");
-    m.insert("claude-sonnet-4-5-thinking", "claude-sonnet-4-5-thinking");
+    // ── OpenAI legacy aliases ───────────────────────────────────────────
+    m.insert("gpt-4", "gpt-4o");
+    m.insert("gpt-4-turbo", "gpt-4o");
+    m.insert("gpt-4-turbo-preview", "gpt-4o");
+    m.insert("gpt-4-0125-preview", "gpt-4o");
+    m.insert("gpt-4-1106-preview", "gpt-4o");
+    m.insert("gpt-4-0613", "gpt-4o");
+    m.insert("gpt-4o-2024-05-13", "gpt-4o");
+    m.insert("gpt-4o-2024-08-06", "gpt-4o");
+    m.insert("gpt-4o-mini-2024-07-18", "gpt-4o-mini");
+    m.insert("gpt-3.5-turbo", "gpt-4o-mini");
+    m.insert("gpt-3.5-turbo-16k", "gpt-4o-mini");
+    m.insert("gpt-3.5-turbo-0125", "gpt-4o-mini");
+    m.insert("gpt-3.5-turbo-1106", "gpt-4o-mini");
+    m.insert("gpt-3.5-turbo-0613", "gpt-4o-mini");
 
-    // 别名映射
-    m.insert("claude-sonnet-4-5-20250929", "claude-sonnet-4-5-thinking");
-    m.insert("claude-3-5-sonnet-20241022", "claude-sonnet-4-5");
-    m.insert("claude-3-5-sonnet-20240620", "claude-sonnet-4-5");
-    // [Redirect] Opus 4.5 -> Opus 4.6 (Issue #1743)
-    m.insert("claude-opus-4", "claude-opus-4-6-thinking");
-    m.insert("claude-opus-4-5-thinking", "claude-opus-4-6-thinking");
-    m.insert("claude-opus-4-5-20251101", "claude-opus-4-6-thinking");
+    // ── Claude legacy / upgrade aliases ─────────────────────────────────
+    // Opus isn't available on Copilot; upgrade to best available Sonnet
+    m.insert("claude-3-opus", "claude-sonnet-4");
+    m.insert("claude-3-opus-20240229", "claude-sonnet-4");
+    m.insert("claude-opus-4", "claude-sonnet-4");
+    m.insert("claude-opus-4-5", "claude-sonnet-4-5");
+    m.insert("claude-opus-4-5-thinking", "claude-sonnet-4-5");
+    m.insert("claude-opus-4-6", "claude-sonnet-4-5");
+    m.insert("claude-opus-4-6-thinking", "claude-sonnet-4-5");
+    // Older Sonnet date-stamped aliases
+    m.insert("claude-3-5-sonnet-20241022", "claude-3.5-sonnet");
+    m.insert("claude-3-5-sonnet-20240620", "claude-3.5-sonnet");
+    // Haiku -> mini Sonnet (Copilot doesn't carry Haiku)
+    m.insert("claude-3-haiku", "claude-3.5-sonnet");
+    m.insert("claude-3-haiku-20240307", "claude-3.5-sonnet");
+    m.insert("claude-haiku-4", "claude-3.5-sonnet");
+    m.insert("claude-haiku-4-5-20251001", "claude-3.5-sonnet");
 
-    // Claude Opus 4.6
-    m.insert("claude-opus-4-6-thinking", "claude-opus-4-6-thinking");
-    m.insert("claude-opus-4-6", "claude-opus-4-6-thinking");
-    m.insert("claude-opus-4-6-20260201", "claude-opus-4-6-thinking");
+    // ── Gemini legacy aliases ───────────────────────────────────────────
+    m.insert("gemini-2.5-flash-thinking", "gemini-2.0-flash");
+    m.insert("gemini-2.5-flash-lite", "gemini-2.0-flash");
 
-    m.insert("claude-haiku-4", "claude-sonnet-4-5");
-    m.insert("claude-3-haiku-20240307", "claude-sonnet-4-5");
-    m.insert("claude-haiku-4-5-20251001", "claude-sonnet-4-5");
-    // OpenAI 协议映射表
-    m.insert("gpt-4", "gemini-2.5-flash");
-    m.insert("gpt-4-turbo", "gemini-2.5-flash");
-    m.insert("gpt-4-turbo-preview", "gemini-2.5-flash");
-    m.insert("gpt-4-0125-preview", "gemini-2.5-flash");
-    m.insert("gpt-4-1106-preview", "gemini-2.5-flash");
-    m.insert("gpt-4-0613", "gemini-2.5-flash");
-
-    m.insert("gpt-4o", "gemini-2.5-flash");
-    m.insert("gpt-4o-2024-05-13", "gemini-2.5-flash");
-    m.insert("gpt-4o-2024-08-06", "gemini-2.5-flash");
-
-    m.insert("gpt-4o-mini", "gemini-2.5-flash");
-    m.insert("gpt-4o-mini-2024-07-18", "gemini-2.5-flash");
-
-    m.insert("gpt-3.5-turbo", "gemini-2.5-flash");
-    m.insert("gpt-3.5-turbo-16k", "gemini-2.5-flash");
-    m.insert("gpt-3.5-turbo-0125", "gemini-2.5-flash");
-    m.insert("gpt-3.5-turbo-1106", "gemini-2.5-flash");
-    m.insert("gpt-3.5-turbo-0613", "gemini-2.5-flash");
-
-    // Gemini 协议映射表
-    m.insert("gemini-2.5-flash-lite", "gemini-2.5-flash");
-    m.insert("gemini-2.5-flash-thinking", "gemini-2.5-flash-thinking");
-    m.insert("gemini-3-pro-low", "gemini-3-pro-preview");
-    m.insert("gemini-3-pro-high", "gemini-3-pro-preview");
-    m.insert("gemini-3-pro-preview", "gemini-3-pro-preview");
-    m.insert("gemini-3-pro", "gemini-3-pro-preview");  // 统一映射到 preview
-    m.insert("gemini-2.5-flash", "gemini-2.5-flash");
-    m.insert("gemini-3-flash", "gemini-3-flash");
-    m.insert("gemini-3-pro-image", "gemini-3-pro-image");
-
-    // [New] Unified Virtual ID for Background Tasks (Title, Summary, etc.)
-    // Allows users to override all background tasks via custom_mapping
-    m.insert("internal-background-task", "gemini-2.5-flash");
-
+    // ── Internal virtual model ──────────────────────────────────────────
+    m.insert("internal-background-task", "gpt-4o-mini");
 
     m
 });
 
+/// Copilot natively supported models (identity passthrough).
+static COPILOT_NATIVE_MODELS: Lazy<Vec<&'static str>> = Lazy::new(|| {
+    vec![
+        // OpenAI models
+        "gpt-4o",
+        "gpt-4o-mini",
+        "gpt-4.1",
+        "gpt-4.1-mini",
+        "gpt-4.1-nano",
+        "o1",
+        "o1-mini",
+        "o3",
+        "o3-mini",
+        "o4-mini",
+        // Anthropic models via Copilot
+        "claude-3.5-sonnet",
+        "claude-sonnet-4",
+        "claude-sonnet-4-5",
+        // Google models via Copilot
+        "gemini-2.0-flash",
+        "gemini-2.5-pro",
+    ]
+});
 
-/// Map Claude model names to Gemini model names
-/// 
-/// # 映射策略
-/// 1. **精确匹配**: 检查 CLAUDE_TO_GEMINI 映射表
-/// 2. **已知前缀透传**: gemini-* 和 *-thinking 模型直接透传
-/// 3. **[NEW] 直接透传**: 未知模型 ID 直接传递给 Google API (支持体验未发布模型)
-/// 
-/// # 参数
-/// - `input`: 原始模型名称
-/// 
-/// # 返回
-/// 映射后的目标模型名称
-/// 
-/// # 示例
+/// Map model names for Copilot upstream.
+///
+/// # Mapping strategy
+/// 1. **Exact alias match**: Check LEGACY_ALIASES table
+/// 2. **Passthrough**: All other model names are sent as-is to Copilot
+///    (Copilot uses standard model names and will return an error for unknown ones)
+///
+/// # Parameters
+/// - `input`: Original model name from the client request
+///
+/// # Returns
+/// The mapped Copilot model name
+///
+/// # Examples
+/// ```ignore
+/// // Legacy alias
+/// assert_eq!(map_model_to_copilot("gpt-4"), "gpt-4o");
+/// assert_eq!(map_model_to_copilot("gpt-3.5-turbo"), "gpt-4o-mini");
+///
+/// // Native passthrough
+/// assert_eq!(map_model_to_copilot("gpt-4o"), "gpt-4o");
+/// assert_eq!(map_model_to_copilot("claude-sonnet-4"), "claude-sonnet-4");
+///
+/// // Unknown model passthrough
+/// assert_eq!(map_model_to_copilot("some-future-model"), "some-future-model");
 /// ```
-/// // 精确匹配
-/// assert_eq!(map_claude_model_to_gemini("claude-opus-4"), "claude-opus-4-5-thinking");
-/// 
-/// // Gemini 模型透传
-/// assert_eq!(map_claude_model_to_gemini("gemini-2.5-flash"), "gemini-2.5-flash");
-/// 
-/// // 直接透传未知模型 (NEW!)
-/// assert_eq!(map_claude_model_to_gemini("claude-opus-4-6"), "claude-opus-4-6");
-/// assert_eq!(map_claude_model_to_gemini("claude-sonnet-5"), "claude-sonnet-5");
-/// ```
-pub fn map_claude_model_to_gemini(input: &str) -> String {
-    // 1. Check exact match in map
-    if let Some(mapped) = CLAUDE_TO_GEMINI.get(input) {
+pub fn map_model_to_copilot(input: &str) -> String {
+    // 1. Check exact alias match
+    if let Some(mapped) = LEGACY_ALIASES.get(input) {
         return mapped.to_string();
     }
 
-    // 2. Pass-through known prefixes (gemini-, -thinking) to support dynamic suffixes
-    if input.starts_with("gemini-") || input.contains("thinking") {
-        return input.to_string();
-    }
-
-
-    // 3. [ENHANCED] 直接透传未知模型 ID,而不是强制 fallback
-    // 这允许用户通过自定义映射体验未发布的模型 (如 claude-opus-4-6)
-    // Google API 会自动处理无效模型并返回错误,用户可以根据错误调整映射
+    // 2. Passthrough: send as-is to Copilot
     input.to_string()
 }
 
-/// 获取所有内置支持的模型列表关键字
-pub fn get_supported_models() -> Vec<String> {
-    CLAUDE_TO_GEMINI.keys().map(|s| s.to_string()).collect()
+/// Backward-compatible alias for callers that still reference the old name.
+#[inline]
+pub fn map_claude_model_to_gemini(input: &str) -> String {
+    map_model_to_copilot(input)
 }
 
-/// 动态获取所有可用模型列表 (包含内置与用户自定义)
+/// Get all known model names (built-in aliases + native models)
+pub fn get_supported_models() -> Vec<String> {
+    let mut models: Vec<String> = LEGACY_ALIASES.keys().map(|s| s.to_string()).collect();
+    for m in COPILOT_NATIVE_MODELS.iter() {
+        let s = m.to_string();
+        if !models.contains(&s) {
+            models.push(s);
+        }
+    }
+    models
+}
+
+/// Dynamically get all available models (built-in + user custom mappings)
 pub async fn get_all_dynamic_models(
     custom_mapping: &tokio::sync::RwLock<std::collections::HashMap<String, String>>,
 ) -> Vec<String> {
     use std::collections::HashSet;
     let mut model_ids = HashSet::new();
 
-    // 1. 获取所有内置映射模型
+    // 1. Built-in native models
+    for m in COPILOT_NATIVE_MODELS.iter() {
+        model_ids.insert(m.to_string());
+    }
+
+    // 2. All legacy alias source names
     for m in get_supported_models() {
         model_ids.insert(m);
     }
 
-    // 2. 获取所有自定义映射模型 (Custom)
+    // 3. User custom mappings
     {
         let mapping = custom_mapping.read().await;
         for key in mapping.keys() {
             model_ids.insert(key.clone());
         }
     }
-
-    // 5. 确保包含常用的 Gemini/画画模型 ID
-    model_ids.insert("gemini-3-pro-low".to_string());
-    
-    // [NEW] Issue #247: Dynamically generate all Image Gen Combinations
-    let base = "gemini-3-pro-image";
-    let resolutions = vec!["", "-2k", "-4k"];
-    let ratios = vec!["", "-1x1", "-4x3", "-3x4", "-16x9", "-9x16", "-21x9"];
-    
-    for res in resolutions {
-        for ratio in ratios.iter() {
-            let mut id = base.to_string();
-            id.push_str(res);
-            id.push_str(ratio);
-            model_ids.insert(id);
-        }
-    }
-
-    model_ids.insert("gemini-2.0-flash-exp".to_string());
-    model_ids.insert("gemini-2.5-flash".to_string());
-    // gemini-2.5-pro removed 
-    model_ids.insert("gemini-3-flash".to_string());
-    model_ids.insert("gemini-3-pro-high".to_string());
-    model_ids.insert("gemini-3-pro-low".to_string());
-
 
     let mut sorted_ids: Vec<_> = model_ids.into_iter().collect();
     sorted_ids.sort();
@@ -170,10 +167,10 @@ pub async fn get_all_dynamic_models(
 /// **Note**: Matching is **case-sensitive**. Pattern `GPT-4*` will NOT match `gpt-4-turbo`.
 ///
 /// Examples:
-/// - `gpt-4*` matches `gpt-4`, `gpt-4-turbo` ✓
-/// - `claude-*-sonnet-*` matches `claude-3-5-sonnet-20241022` ✓
-/// - `*-thinking` matches `claude-opus-4-5-thinking` ✓
-/// - `a*b*c` matches `a123b456c` ✓
+/// - `gpt-4*` matches `gpt-4`, `gpt-4-turbo`
+/// - `claude-*-sonnet-*` matches `claude-3-5-sonnet-20241022`
+/// - `*-thinking` matches `claude-opus-4-5-thinking`
+/// - `a*b*c` matches `a123b456c`
 fn wildcard_match(pattern: &str, text: &str) -> bool {
     let parts: Vec<&str> = pattern.split('*').collect();
 
@@ -211,29 +208,26 @@ fn wildcard_match(pattern: &str, text: &str) -> bool {
     true
 }
 
-/// 核心模型路由解析引擎
-/// 优先级：精确匹配 > 通配符匹配 > 系统默认映射
-/// 
-/// # 参数
-/// - `original_model`: 原始模型名称
-/// - `custom_mapping`: 用户自定义映射表
-/// 
-/// # 返回
-/// 映射后的目标模型名称
+/// Core model routing engine.
+/// Priority: exact custom match > wildcard custom match > system default mapping
+///
+/// # Parameters
+/// - `original_model`: Original model name from client
+/// - `custom_mapping`: User-defined mapping table
+///
+/// # Returns
+/// The resolved target model name
 pub fn resolve_model_route(
     original_model: &str,
     custom_mapping: &std::collections::HashMap<String, String>,
 ) -> String {
-    // 1. 精确匹配 (最高优先级)
+    // 1. Exact custom match (highest priority)
     if let Some(target) = custom_mapping.get(original_model) {
-        crate::modules::logger::log_info(&format!("[Router] 精确映射: {} -> {}", original_model, target));
+        crate::modules::logger::log_info(&format!("[Router] Exact mapping: {} -> {}", original_model, target));
         return target.clone();
     }
-    
+
     // 2. Wildcard match - most specific (highest non-wildcard chars) wins
-    // Note: When multiple patterns have the SAME specificity, HashMap iteration order
-    // determines the result (non-deterministic). Users can avoid this by making patterns
-    // more specific. Future improvement: use IndexMap + frontend sorting for full control.
     let mut best_match: Option<(&str, &str, usize)> = None;
 
     for (pattern, target) in custom_mapping.iter() {
@@ -252,45 +246,45 @@ pub fn resolve_model_route(
         ));
         return target.to_string();
     }
-    
-    // 3. 系统默认映射
-    let result = map_claude_model_to_gemini(original_model);
+
+    // 3. System default mapping (legacy aliases + passthrough)
+    let result = map_model_to_copilot(original_model);
     if result != original_model {
-        crate::modules::logger::log_info(&format!("[Router] 系统默认映射: {} -> {}", original_model, result));
+        crate::modules::logger::log_info(&format!("[Router] System default mapping: {} -> {}", original_model, result));
     }
     result
 }
 
-/// Normalize any physical model name to one of the 3 standard protection IDs.
-/// This ensures quota protection works consistently regardless of API versioning or request variations.
-/// 
+/// Normalize any model name to a standard protection ID for quota tracking.
+///
 /// Standard IDs:
-/// - `gemini-3-flash`: All Flash variants (1.5-flash, 2.5-flash, 3-flash, etc.)
-/// - `gemini-3-pro-high`: All Pro variants (1.5-pro, 2.5-pro, etc.)
-/// - `claude-sonnet-4-5`: All Claude Sonnet variants (3-5-sonnet, sonnet-4-5, etc.)
-/// 
-/// Returns `None` if the model doesn't match any of the 3 protected categories.
+/// - `gpt`: All GPT / OpenAI reasoning model variants
+/// - `claude`: All Claude / Anthropic variants
+/// - `gemini`: All Gemini / Google variants
+/// - `o-series`: All OpenAI reasoning models (o1, o3, o4-mini)
+///
+/// Returns `None` if the model doesn't match any protected category.
 pub fn normalize_to_standard_id(model_name: &str) -> Option<String> {
     let lower = model_name.to_lowercase();
-    
-    // 1. gemini-3-pro-image (优先匹配)
-    if lower == "gemini-3-pro-image" {
-        return Some("gemini-3-pro-image".to_string());
+
+    // OpenAI reasoning models (o1, o3, o4-mini)
+    if lower.starts_with("o1") || lower.starts_with("o3") || lower.starts_with("o4") {
+        return Some("o-series".to_string());
     }
 
-    // 2. gemini-3-flash (包含所有 flash 变体)
-    if lower.contains("flash") {
-        return Some("gemini-3-flash".to_string());
+    // GPT models
+    if lower.starts_with("gpt-") {
+        return Some("gpt".to_string());
     }
 
-    // 3. gemini-3-pro-high (包含 pro 变体)
-    if lower.contains("pro") && !lower.contains("image") {
-        return Some("gemini-3-pro-high".to_string());
-    }
-
-    // 4. Claude 系列 (合并 Opus, Sonnet, Haiku 为统一保护组 'claude')
-    if lower.contains("claude") || lower.contains("opus") || lower.contains("sonnet") || lower.contains("haiku") {
+    // Claude / Anthropic models
+    if lower.contains("claude") || lower.contains("sonnet") || lower.contains("opus") || lower.contains("haiku") {
         return Some("claude".to_string());
+    }
+
+    // Gemini / Google models
+    if lower.contains("gemini") {
+        return Some("gemini".to_string());
     }
 
     None
@@ -302,40 +296,37 @@ mod tests {
 
     #[test]
     fn test_model_mapping() {
-        assert_eq!(
-            map_claude_model_to_gemini("claude-3-5-sonnet-20241022"),
-            "claude-sonnet-4-5"
-        );
-        assert_eq!(
-            map_claude_model_to_gemini("claude-opus-4"),
-            "claude-opus-4-6-thinking"
-        );
-        // Test gemini pass-through (should not be caught by "mini" rule)
-        assert_eq!(
-            map_claude_model_to_gemini("gemini-2.5-flash-mini-test"),
-            "gemini-2.5-flash-mini-test"
-        );
-        assert_eq!(
-            map_claude_model_to_gemini("unknown-model"),
-            "unknown-model"
-        );
+        // Legacy aliases
+        assert_eq!(map_model_to_copilot("gpt-4"), "gpt-4o");
+        assert_eq!(map_model_to_copilot("gpt-3.5-turbo"), "gpt-4o-mini");
+        assert_eq!(map_model_to_copilot("claude-3-opus"), "claude-sonnet-4");
 
-        // Test Normalization (Opus 4.6 now merged into "claude" group)
-        assert_eq!(normalize_to_standard_id("claude-opus-4-6-thinking"), Some("claude".to_string()));
-        assert_eq!(
-            normalize_to_standard_id("claude-sonnet-4-5"),
-            Some("claude".to_string())
-        );
+        // Native passthrough
+        assert_eq!(map_model_to_copilot("gpt-4o"), "gpt-4o");
+        assert_eq!(map_model_to_copilot("claude-sonnet-4"), "claude-sonnet-4");
+        assert_eq!(map_model_to_copilot("gemini-2.0-flash"), "gemini-2.0-flash");
+        assert_eq!(map_model_to_copilot("o3-mini"), "o3-mini");
 
-        // [Regression] gemini-3-pro-image must NOT be grouped with gemini-3-pro-high
-        assert_eq!(
-            normalize_to_standard_id("gemini-3-pro-image"),
-            Some("gemini-3-pro-image".to_string())
-        );
-        assert_eq!(
-            normalize_to_standard_id("gemini-3-pro-high"),
-            Some("gemini-3-pro-high".to_string())
-        );
+        // Unknown model passthrough
+        assert_eq!(map_model_to_copilot("unknown-model"), "unknown-model");
+
+        // Backward-compat alias
+        assert_eq!(map_claude_model_to_gemini("gpt-4"), "gpt-4o");
+        assert_eq!(map_claude_model_to_gemini("unknown-model"), "unknown-model");
+    }
+
+    #[test]
+    fn test_normalize_to_standard_id() {
+        assert_eq!(normalize_to_standard_id("gpt-4o"), Some("gpt".to_string()));
+        assert_eq!(normalize_to_standard_id("gpt-4.1-mini"), Some("gpt".to_string()));
+        assert_eq!(normalize_to_standard_id("claude-sonnet-4"), Some("claude".to_string()));
+        assert_eq!(normalize_to_standard_id("claude-3.5-sonnet"), Some("claude".to_string()));
+        assert_eq!(normalize_to_standard_id("gemini-2.0-flash"), Some("gemini".to_string()));
+        assert_eq!(normalize_to_standard_id("gemini-2.5-pro"), Some("gemini".to_string()));
+        assert_eq!(normalize_to_standard_id("o3-mini"), Some("o-series".to_string()));
+        assert_eq!(normalize_to_standard_id("o1"), Some("o-series".to_string()));
+        assert_eq!(normalize_to_standard_id("o4-mini"), Some("o-series".to_string()));
+        assert_eq!(normalize_to_standard_id("random-unknown"), None);
     }
 
     #[test]
@@ -361,7 +352,6 @@ mod tests {
         custom.insert("gpt-*-*".to_string(), "gpt-multi".to_string());
         custom.insert("*thinking*".to_string(), "has-thinking".to_string());
 
-        // Multi-wildcard patterns should work
         assert_eq!(
             resolve_model_route("claude-3-5-sonnet-20241022", &custom),
             "sonnet-versioned"
@@ -378,7 +368,7 @@ mod tests {
         // Negative case: *thinking* should NOT match models without "thinking"
         assert_eq!(
             resolve_model_route("random-model-name", &custom),
-            "random-model-name"  // Falls back to system default (pass-through)
+            "random-model-name"  // Falls back to system default (passthrough)
         );
     }
 

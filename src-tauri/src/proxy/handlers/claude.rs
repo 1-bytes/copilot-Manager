@@ -13,7 +13,7 @@ use tokio::time::Duration;
 use tracing::{debug, error, info};
 
 use crate::proxy::mappers::claude::{
-    transform_claude_request_in, transform_response, create_claude_sse_stream, ClaudeRequest,
+    ClaudeRequest,
     filter_invalid_thinking_blocks_with_family, close_tool_loop_for_thinking,
     clean_cache_control_from_messages, merge_consecutive_messages,
     models::{Message, MessageContent},
@@ -553,7 +553,7 @@ pub async fn handle_messages(
         let session_id = Some(session_id_str.as_str());
 
         let force_rotate_token = attempt > 0;
-        let (access_token, project_id, email, account_id, _wait_ms) = match token_manager.get_token(&config.request_type, force_rotate_token, session_id, &config.final_model).await {
+        let (copilot_token, _project_id, email, account_id, _wait_ms) = match token_manager.get_token(&config.request_type, force_rotate_token, session_id, &config.final_model).await {
             Ok(t) => t,
             Err(e) => {
                 let safe_message = if e.contains("invalid_grant") {
@@ -779,7 +779,7 @@ pub async fn handle_messages(
 
         // [FIX] Estimate AFTER purification to get accurate token count for calibrator learning
         // Only estimate for calibrator when content was not purified, to avoid skewed learning
-        let raw_estimated = if !is_purified {
+        let _raw_estimated = if !is_purified {
             ContextManager::estimate_token_usage(&request_with_mapped)
         } else {
             0 // Don't record calibration data when content was purified
@@ -790,9 +790,10 @@ pub async fn handle_messages(
         // 生成 Trace ID (简单用时间戳后缀)
         // let _trace_id = format!("req_{}", chrono::Utc::now().timestamp_subsec_millis());
 
-        let gemini_body = match transform_claude_request_in(&request_with_mapped, &project_id, retried_without_thinking) {
+        // [COPILOT] Serialize the Claude request directly - Copilot supports Anthropic format natively
+        let copilot_body = match serde_json::to_value(&request_with_mapped) {
             Ok(b) => {
-                debug!("[{}] Transformed Gemini Body: {}", trace_id, serde_json::to_string_pretty(&b).unwrap_or_default());
+                debug!("[{}] Copilot Request Body: {}", trace_id, serde_json::to_string_pretty(&b).unwrap_or_default());
                 b
             },
             Err(e) => {
@@ -807,7 +808,7 @@ pub async fn handle_messages(
                         "type": "error",
                         "error": {
                             "type": "api_error",
-                            "message": format!("Transform error: {}", e)
+                            "message": format!("Serialization error: {}", e)
                         }
                     }))
                 ).into_response();
@@ -816,36 +817,27 @@ pub async fn handle_messages(
 
         if debug_logger::is_enabled(&debug_cfg) {
             let payload = json!({
-                "kind": "v1internal_request",
+                "kind": "copilot_request",
                 "protocol": "anthropic",
                 "trace_id": trace_id,
                 "original_model": request.model,
                 "mapped_model": request_with_mapped.model,
                 "request_type": config.request_type,
                 "attempt": attempt,
-                "v1internal_request": gemini_body.clone(),
+                "copilot_request": copilot_body.clone(),
             });
-            debug_logger::write_debug_payload(&debug_cfg, Some(&trace_id), "v1internal_request", &payload).await;
+            debug_logger::write_debug_payload(&debug_cfg, Some(&trace_id), "copilot_request", &payload).await;
         }
         
-    // 4. 上游调用 - 自动转换逻辑
+    // 4. 上游调用 - Copilot 直连 (Anthropic 原生格式)
     let client_wants_stream = request.stream;
-    // [AUTO-CONVERSION] 非 Stream 请求自动转换为 Stream 以享受更宽松的配额
-    let force_stream_internally = !client_wants_stream;
-    let actual_stream = client_wants_stream || force_stream_internally;
-    
-    if force_stream_internally {
-        info!("[{}] 🔄 Auto-converting non-stream request to stream for better quota", trace_id);
-    }
-    
-    let method = if actual_stream { "streamGenerateContent" } else { "generateContent" };
-    let query = if actual_stream { Some("alt=sse") } else { None };
-        // [FIX #765/1522] Prepare Robust Beta Headers for Claude models
-        let mut extra_headers = std::collections::HashMap::new();
-        if mapped_model.to_lowercase().contains("claude") {
-            extra_headers.insert("anthropic-beta".to_string(), "claude-code-20250219".to_string());
-            tracing::debug!("[{}] Added Comprehensive Beta Headers for Claude model", trace_id);
-        }
+    // Copilot uses the stream field in the request body directly
+    let actual_stream = client_wants_stream;
+        // [FIX #765/1522] Prepare Robust Beta Headers for Copilot
+        let mut extra_headers: Vec<(String, String)> = Vec::new();
+        // Copilot natively supports Claude format; add beta headers
+        extra_headers.push(("anthropic-beta".to_string(), "claude-code-20250219".to_string()));
+        tracing::debug!("[{}] Added Comprehensive Beta Headers for Copilot Claude model", trace_id);
         
         // [NEW] Inject Beta Headers from Client Adapter
         if let Some(adapter) = &client_adapter {
@@ -854,17 +846,18 @@ pub async fn handle_messages(
             for (k, v) in temp_headers {
                 if let Some(name) = k {
                     if let Ok(v_str) = v.to_str() {
-                        extra_headers.insert(name.to_string(), v_str.to_string());
+                        extra_headers.push((name.to_string(), v_str.to_string()));
                         tracing::debug!("[{}] Added Adapter Header: {}: {}", trace_id, name, v_str);
                     }
                 }
             }
         }
 
-        // Upstream call configuration continued...
+        // [COPILOT] Call Copilot with native Anthropic /v1/messages endpoint
+        let extra_headers_option: Option<&[(String, String)]> = if extra_headers.is_empty() { None } else { Some(&extra_headers) };
 
         let call_result = match upstream
-            .call_v1_internal_with_headers(method, &access_token, gemini_body, query, extra_headers.clone(), Some(account_id.as_str()))
+            .call_copilot("/v1/messages", &copilot_token, Some(&copilot_body), extra_headers_option, None, Some(account_id.as_str()), reqwest::Method::POST)
             .await {
             Ok(r) => r,
             Err(e) => {
@@ -906,9 +899,6 @@ pub async fn handle_messages(
         if status.is_success() {
             // [智能限流] 请求成功，重置该账号的连续失败计数
             token_manager.mark_account_success(&email);
-            
-                // Determine context limit based on model
-                let context_limit = crate::proxy::mappers::claude::utils::get_context_limit_for_model(&request_with_mapped.model);
 
             // 处理流式响应
             if actual_stream {
@@ -922,7 +912,8 @@ pub async fn handle_messages(
                     "status": status.as_u16(),
                     "upstream_url": upstream_url,
                 });
-                let gemini_stream = debug_logger::wrap_reqwest_stream_with_debug(
+                // [COPILOT] Stream is already in native Claude SSE format - pass through directly
+                let copilot_stream = debug_logger::wrap_reqwest_stream_with_debug(
                     Box::pin(response.bytes_stream()),
                     debug_cfg.clone(),
                     trace_id.clone(),
@@ -930,22 +921,10 @@ pub async fn handle_messages(
                     meta,
                 );
 
-                let current_message_count = request_with_mapped.messages.len();
-
-                // [FIX #530/#529/#859] Enhanced Peek logic to handle heartbeats and slow start
-                // We must pre-read until we find a MEANINGFUL content block (like message_start).
-                // If we only get heartbeats (ping) and then the stream dies, we should rotate account.
-                let mut claude_stream = create_claude_sse_stream(
-                    gemini_stream,
-                    trace_id.clone(),
-                    email.clone(),
-                    Some(session_id_str.clone()),
-                    scaling_enabled,
-                    context_limit,
-                    Some(raw_estimated), // [FIX] Pass estimated tokens for calibrator learning
-                    current_message_count, // [NEW v4.0.0] Pass message count for rewind detection
-                    client_adapter.clone(), // [NEW] Pass client adapter
-                );
+                // Wrap the reqwest stream into a Bytes stream with error mapping for peek logic
+                let mut claude_stream = Box::pin(copilot_stream.map(|result| -> Result<Bytes, String> {
+                    result.map_err(|e| format!("Stream error: {}", e))
+                })) as std::pin::Pin<Box<dyn futures::Stream<Item = Result<Bytes, String>> + Send>>;
 
                 let mut first_data_chunk = None;
                 let mut retry_this_account = false;
@@ -998,7 +977,7 @@ pub async fn handle_messages(
                     Some(bytes) => {
                         // We have data! Construct the combined stream
                         let stream_rest = claude_stream;
-                        let combined_stream = Box::pin(futures::stream::once(async move { Ok(bytes) })
+                        let combined_stream = Box::pin(futures::stream::once(async move { Ok::<Bytes, std::io::Error>(bytes) })
                             .chain(stream_rest.map(|result| -> Result<Bytes, std::io::Error> {
                                 match result {
                                     Ok(b) => Ok(b),
@@ -1050,7 +1029,7 @@ pub async fn handle_messages(
                     }
                 }
             } else {
-                // 处理非流式响应
+                // [COPILOT] Non-streaming response - Copilot returns native Claude JSON format
                 let bytes = match response.bytes().await {
                     Ok(b) => b,
                     Err(e) => return (StatusCode::BAD_GATEWAY, format!("Failed to read body: {}", e)).into_response(),
@@ -1058,59 +1037,41 @@ pub async fn handle_messages(
                 
                 // Debug print
                 if let Ok(text) = String::from_utf8(bytes.to_vec()) {
-                    debug!("Upstream Response for Claude request: {}", text);
+                    debug!("Upstream Copilot Response for Claude request: {}", text);
                 }
 
-                let gemini_resp: Value = match serde_json::from_slice(&bytes) {
+                // Copilot response is already in Claude format - parse for logging, then forward directly
+                let claude_resp: Value = match serde_json::from_slice(&bytes) {
                     Ok(v) => v,
                     Err(e) => return (StatusCode::BAD_GATEWAY, format!("Parse error: {}", e)).into_response(),
                 };
 
-                // 解包 response 字段（v1internal 格式）
-                let raw = gemini_resp.get("response").unwrap_or(&gemini_resp);
+                // [Optimization] Log usage info if available
+                if let Some(usage) = claude_resp.get("usage") {
+                    let input_tokens = usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let output_tokens = usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let cache_info = usage.get("cache_read_input_tokens")
+                        .and_then(|v| v.as_u64())
+                        .map(|c| format!(", Cached: {}", c))
+                        .unwrap_or_default();
+                    
+                    tracing::info!(
+                        "[{}] Request finished. Model: {}, Tokens: In {}, Out {}{}", 
+                        trace_id, 
+                        request_with_mapped.model, 
+                        input_tokens, 
+                        output_tokens,
+                        cache_info
+                    );
+                }
 
-                // 转换为 Gemini Response 结构
-                let gemini_response: crate::proxy::mappers::claude::models::GeminiResponse = match serde_json::from_value(raw.clone()) {
-                    Ok(r) => r,
-                    Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("Convert error: {}", e)).into_response(),
-                };
-                
-                // Determine context limit based on model
-                let context_limit = crate::proxy::mappers::claude::utils::get_context_limit_for_model(&request_with_mapped.model);
-
-                // 转换
-                // [FIX #765] Pass session_id and model_name for signature caching
-                let s_id_owned = session_id.map(|s| s.to_string());
-                // 转换
-                let claude_response = match transform_response(
-                    &gemini_response,
-                    scaling_enabled,
-                    context_limit,
-                    s_id_owned,
-                    request_with_mapped.model.clone(),
-                    request_with_mapped.messages.len(), // [NEW v4.0.0] Pass message count for rewind detection
-                ) {
-                    Ok(r) => r,
-                    Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("Transform error: {}", e)).into_response(),
-                };
-
-                // [Optimization] 记录闭环日志：消耗情况
-                let cache_info = if let Some(cached) = claude_response.usage.cache_read_input_tokens {
-                    format!(", Cached: {}", cached)
-                } else {
-                    String::new()
-                };
-                
-                tracing::info!(
-                    "[{}] Request finished. Model: {}, Tokens: In {}, Out {}{}", 
-                    trace_id, 
-                    request_with_mapped.model, 
-                    claude_response.usage.input_tokens, 
-                    claude_response.usage.output_tokens,
-                    cache_info
-                );
-
-                return (StatusCode::OK, [("X-Account-Email", email.as_str()), ("X-Mapped-Model", request_with_mapped.model.as_str())], Json(claude_response)).into_response();
+                return Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header("X-Account-Email", &email)
+                    .header("X-Mapped-Model", &request_with_mapped.model)
+                    .body(Body::from(bytes))
+                    .unwrap();
             }
         }
         

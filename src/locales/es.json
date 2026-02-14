@@ -150,50 +150,7 @@
         "reset_time": "Tiempo de Reinicio",
         "switch_to": "Cambiar a esta cuenta",
         "actions": "Acciones",
-        "device_fingerprint": "Huella Digital del Dispositivo",
         "show_all_quotas": "Mostrar todas las cuotas",
-        "device_fingerprint_dialog": {
-            "title": "Huella Digital del Dispositivo",
-            "operations": "Operaciones de Huella Digital",
-            "generate_and_bind": "Generar y Vincular",
-            "restore_original": "Restaurar Original",
-            "open_storage_directory": "Abrir Directorio de Almacenamiento",
-            "current_storage": "Almacenamiento Actual",
-            "effective": "Efectivo",
-            "current_storage_desc": "Leído de storage.json (actualizado después de aplicar vinculación al cambiar cuentas)",
-            "account_binding": "Vinculación de Cuenta",
-            "pending_application": "Aplicación Pendiente",
-            "account_binding_desc": "Guardado como vinculación después de generación/restauración, escrito en storage.json al cambiar cuentas",
-            "historical_fingerprints": "Huellas Históricas (restaurar/eliminar opcional)",
-            "no_history": "Sin Historial",
-            "current": "Actual",
-            "restore": "Restaurar",
-            "delete_version": "Eliminar esta versión",
-            "confirm_generate_title": "¿Confirmar generar y vincular?",
-            "confirm_generate_desc": "Se generará un nuevo conjunto de huellas digitales y se establecerá como huella actual. ¿Confirmar continuar?",
-            "confirm_restore_title": "¿Confirmar restaurar huella original?",
-            "confirm_restore_desc": "Se restaurará a la huella original y sobrescribirá la huella actual. ¿Confirmar continuar?",
-            "cancel": "Cancelar",
-            "confirm": "Confirmar",
-            "processing": "Procesando...",
-            "loading": "Cargando...",
-            "failed_to_load_device_info": "Error al cargar información del dispositivo",
-            "generation_failed": "Error en generación",
-            "binding_failed": "Error en vinculación",
-            "restoration_failed": "Error en restauración",
-            "deletion_failed": "Error en eliminación",
-            "directory_open_failed": "No se puede abrir el directorio",
-            "generated_and_bound": "Generado y vinculado",
-            "restored": "Restaurado",
-            "deleted": "Eliminado",
-            "directory_opened": "Directorio de almacenamiento abierto",
-            "original_fingerprint_not_found": "Huella original no encontrada"
-        },
-        "warmup_all": "Calentamiento con Un Clic",
-        "warmup_selected": "Calentar ({{count}})",
-        "warmup_this": "Calentar esta cuenta",
-        "warmup_now": "Calentar Ahora",
-        "warmup_batch_triggered": "Tareas de calentamiento activadas para {{count}} cuentas",
         "quota_protected": "Protegida",
         "details": {
             "title": "Detalles de Cuota",
@@ -207,9 +164,9 @@
         "add": {
             "title": "Agregar Cuenta",
             "tabs": {
-                "oauth": "OAuth",
-                "token": "Token de Actualización",
-                "import": "Importar DB"
+                "oauth": "Device Flow",
+                "token": "GitHub Token",
+                "import": "Import"
             },
             "oauth": {
                 "recommend": "Recomendado",
@@ -255,6 +212,17 @@
             "oauth_error": "Error de OAuth: {{error}}",
             "status": {
                 "error_token": "Por favor ingrese el Token de Actualización"
+            },
+            "device_flow": {
+                "title": "GitHub Device Flow Login",
+                "start": "Start GitHub Login",
+                "code_label": "Enter this code on GitHub:",
+                "open_github": "Open GitHub",
+                "waiting": "Waiting for authorization...",
+                "expires_in": "Expires in {{time}}",
+                "success": "Authorization successful!",
+                "expired": "Code expired. Please try again.",
+                "cancelled": "Login cancelled."
             }
         },
         "table": {
@@ -330,10 +298,6 @@
             "auto_sync": "Sincronización Automática de Cuenta Actual",
             "auto_sync_desc": "Sincronizar automáticamente la información de la cuenta activa periódicamente",
             "sync_interval": "Intervalo de Sincronización (segundos)"
-        },
-        "warmup": {
-            "title": "Calentamiento Inteligente",
-            "desc": "Monitorea automáticamente todos los modelos y activa el calentamiento inmediatamente cuando la cuota alcanza el 100%, manteniendo los modelos activos"
         },
         "quota_protection": {
             "title": "Protección de Cuota",

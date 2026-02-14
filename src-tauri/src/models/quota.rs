@@ -15,9 +15,15 @@ pub struct QuotaData {
     pub last_updated: i64,
     #[serde(default)]
     pub is_forbidden: bool,
-    /// 订阅等级 (FREE/PRO/ULTRA)
+    /// Copilot plan (free_limited/individual/pro/business/enterprise)
     #[serde(default)]
-    pub subscription_tier: Option<String>,
+    pub plan: Option<String>,
+    /// Quota snapshots for tracking usage history
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quota_snapshots: Vec<serde_json::Value>,
+    /// Quota reset date (ISO 8601 string)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota_reset_date: Option<String>,
 }
 
 impl QuotaData {
@@ -26,7 +32,9 @@ impl QuotaData {
             models: Vec::new(),
             last_updated: chrono::Utc::now().timestamp(),
             is_forbidden: false,
-            subscription_tier: None,
+            plan: None,
+            quota_snapshots: Vec::new(),
+            quota_reset_date: None,
         }
     }
 

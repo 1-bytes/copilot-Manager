@@ -1,17 +1,15 @@
 services:
-  antigravity-manager:
+  copilot-manager:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: antigravity-manager
-    container_name: antigravity-manager
-    network_mode: host  # 使用宿主机网络，可直接访问 localhost:8045
-    # ports:  # host 模式不需要端口映射
-    #   - "8045:8045"
+    image: ghcr.io/1-bytes/copilot-manager:latest
+    container_name: copilot-manager
+    network_mode: host
     volumes:
-      - ~/.antigravity_tools:/root/.antigravity_tools
+      - ~/.copilot_manager:/root/.copilot_manager
     environment:
       - LOG_LEVEL=info
-      - API_KEY=test  # [重要] 請設置您的安全密鑰，若不設置則在日誌中查看隨機密鑰
-      - ABV_BIND_LOCAL_ONLY=true  # 僅綁定 127.0.0.1
+      - API_KEY=test  # [重要] 请设置您的安全密钥
+      - ABV_BIND_LOCAL_ONLY=true
     restart: unless-stopped

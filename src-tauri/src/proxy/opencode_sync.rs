@@ -1013,8 +1013,8 @@ fn sync_accounts_file(accounts_path: &PathBuf) -> Result<(), String> {
             continue;
         }
 
-        let refresh_token = acc.token.refresh_token.clone();
-        let project_id = acc.token.project_id.clone();
+        let refresh_token = acc.token.github_token.clone();
+        let project_id = acc.token.copilot_token.clone();
 
         // Try to find existing account state (match by refresh_token first, then email fallback)
         let existing = existing_accounts_by_refresh_token

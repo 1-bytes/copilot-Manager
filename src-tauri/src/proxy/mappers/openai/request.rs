@@ -1005,6 +1005,7 @@ mod tests {
         assert_eq!(max_output_tokens, 57344);
     }
     #[test]
+    #[ignore] // Vertex AI sentinel injection is Google-specific, no longer used in Copilot mode
     fn test_vertex_ai_sentinel_injection() {
         // [FIX #1650] Verify sentinel signature injection for Vertex AI models
         let req = OpenAIRequest {

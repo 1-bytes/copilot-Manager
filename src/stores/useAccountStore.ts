@@ -2,6 +2,12 @@ import { create } from 'zustand';
 import { Account } from '../types/account';
 import * as accountService from '../services/accountService';
 
+interface DeviceFlowResponse {
+    user_code: string;
+    verification_uri: string;
+    expires_in: number;
+}
+
 interface AccountState {
     accounts: Account[];
     currentAccount: Account | null;
@@ -11,7 +17,7 @@ interface AccountState {
     // Actions
     fetchAccounts: () => Promise<void>;
     fetchCurrentAccount: () => Promise<void>;
-    addAccount: (email: string, refreshToken: string) => Promise<void>;
+    addAccount: (email: string, githubToken: string) => Promise<void>;
     deleteAccount: (accountId: string) => Promise<void>;
     deleteAccounts: (accountIds: string[]) => Promise<void>;
     switchAccount: (accountId: string) => Promise<void>;
@@ -19,17 +25,15 @@ interface AccountState {
     refreshAllQuotas: () => Promise<accountService.RefreshStats>;
     reorderAccounts: (accountIds: string[]) => Promise<void>;
 
-    // 新增 actions
-    startOAuthLogin: () => Promise<void>;
-    completeOAuthLogin: () => Promise<void>;
-    cancelOAuthLogin: () => Promise<void>;
-    importV1Accounts: () => Promise<void>;
-    importFromDb: () => Promise<void>;
-    importFromCustomDb: (path: string) => Promise<void>;
-    syncAccountFromDb: () => Promise<void>;
+    // Device flow actions
+    startDeviceFlow: () => Promise<DeviceFlowResponse>;
+    completeDeviceFlow: () => Promise<Account>;
+    cancelDeviceFlow: () => Promise<void>;
+
+    // Import/export
+    importAccounts: (exportData: any) => Promise<void>;
+
     toggleProxyStatus: (accountId: string, enable: boolean, reason?: string) => Promise<void>;
-    warmUpAccounts: () => Promise<string>;
-    warmUpAccount: (accountId: string) => Promise<string>;
     updateAccountLabel: (accountId: string, label: string) => Promise<void>;
 }
 
@@ -61,10 +65,10 @@ export const useAccountStore = create<AccountState>((set, get) => ({
         }
     },
 
-    addAccount: async (email: string, refreshToken: string) => {
+    addAccount: async (email: string, githubToken: string) => {
         set({ loading: true, error: null });
         try {
-            await accountService.addAccount(email, refreshToken);
+            await accountService.addAccount(email, githubToken);
             await get().fetchAccounts();
             set({ loading: false });
         } catch (error) {
@@ -172,55 +176,44 @@ export const useAccountStore = create<AccountState>((set, get) => ({
         }
     },
 
-    startOAuthLogin: async () => {
+    startDeviceFlow: async () => {
         set({ loading: true, error: null });
         try {
-            await accountService.startOAuthLogin();
-            await get().fetchAccounts();
+            const result = await accountService.startDeviceFlow();
             set({ loading: false });
+            return result;
         } catch (error) {
             set({ error: String(error), loading: false });
             throw error;
         }
     },
 
-    completeOAuthLogin: async () => {
+    completeDeviceFlow: async () => {
         set({ loading: true, error: null });
         try {
-            await accountService.completeOAuthLogin();
+            const account = await accountService.completeDeviceFlow();
             await get().fetchAccounts();
             set({ loading: false });
+            return account;
         } catch (error) {
             set({ error: String(error), loading: false });
             throw error;
         }
     },
 
-    cancelOAuthLogin: async () => {
+    cancelDeviceFlow: async () => {
         try {
-            await accountService.cancelOAuthLogin();
+            await accountService.cancelDeviceFlow();
             set({ loading: false, error: null });
         } catch (error) {
-            console.error('[Store] Cancel OAuth failed:', error);
+            console.error('[Store] Cancel device flow failed:', error);
         }
     },
 
-    importV1Accounts: async () => {
+    importAccounts: async (exportData: any) => {
         set({ loading: true, error: null });
         try {
-            await accountService.importV1Accounts();
-            await get().fetchAccounts();
-            set({ loading: false });
-        } catch (error) {
-            set({ error: String(error), loading: false });
-            throw error;
-        }
-    },
-
-    importFromDb: async () => {
-        set({ loading: true, error: null });
-        try {
-            await accountService.importFromDb();
+            await accountService.importAccounts(exportData);
             await Promise.all([
                 get().fetchAccounts(),
                 get().fetchCurrentAccount()
@@ -229,34 +222,6 @@ export const useAccountStore = create<AccountState>((set, get) => ({
         } catch (error) {
             set({ error: String(error), loading: false });
             throw error;
-        }
-    },
-
-    importFromCustomDb: async (path: string) => {
-        set({ loading: true, error: null });
-        try {
-            await accountService.importFromCustomDb(path);
-            await Promise.all([
-                get().fetchAccounts(),
-                get().fetchCurrentAccount()
-            ]);
-            set({ loading: false });
-        } catch (error) {
-            set({ error: String(error), loading: false });
-            throw error;
-        }
-    },
-
-    syncAccountFromDb: async () => {
-        try {
-            const syncedAccount = await accountService.syncAccountFromDb();
-            if (syncedAccount) {
-                console.log('[AccountStore] Account synced from DB:', syncedAccount.email);
-                await get().fetchAccounts();
-                set({ currentAccount: syncedAccount });
-            }
-        } catch (error) {
-            console.error('[AccountStore] Sync from DB failed:', error);
         }
     },
 
@@ -266,32 +231,6 @@ export const useAccountStore = create<AccountState>((set, get) => ({
             await get().fetchAccounts();
         } catch (error) {
             console.error('[AccountStore] Toggle proxy status failed:', error);
-            throw error;
-        }
-    },
-
-    warmUpAccounts: async () => {
-        set({ loading: true, error: null });
-        try {
-            const result = await accountService.warmUpAllAccounts();
-            await get().fetchAccounts();
-            set({ loading: false });
-            return result;
-        } catch (error) {
-            set({ error: String(error), loading: false });
-            throw error;
-        }
-    },
-
-    warmUpAccount: async (accountId: string) => {
-        set({ loading: true, error: null });
-        try {
-            const result = await accountService.warmUpAccount(accountId);
-            await get().fetchAccounts();
-            set({ loading: false });
-            return result;
-        } catch (error) {
-            set({ error: String(error), loading: false });
             throw error;
         }
     },

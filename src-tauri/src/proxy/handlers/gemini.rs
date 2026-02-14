@@ -132,7 +132,7 @@ pub async fn handle_generate(
         let session_id = SessionManager::extract_gemini_session_id(&body, &model_name);
 
         // 关键：在重试尝试 (attempt > 0) 时强制轮换账号
-        let (access_token, project_id, email, account_id, _wait_ms) = match token_manager
+        let (copilot_token, _unused, email, account_id, _wait_ms) = match token_manager
             .get_token(
                 &config.request_type,
                 attempt > 0,
@@ -155,7 +155,7 @@ pub async fn handle_generate(
 
         // 5. 包装请求 (project injection)
         // [FIX #765] Pass session_id to wrap_request for signature injection
-        let wrapped_body = wrap_request(&body, &project_id, &mapped_model, Some(&session_id));
+        let wrapped_body = wrap_request(&body, "", &mapped_model, Some(&session_id));
 
         if debug_logger::is_enabled(&debug_cfg) {
             let payload = json!({
@@ -178,8 +178,8 @@ pub async fn handle_generate(
         }
 
         // 5. 上游调用
-        let query_string = if is_stream { Some("alt=sse") } else { None };
-        let upstream_method = if is_stream {
+        let _query_string = if is_stream { Some("alt=sse") } else { None };
+        let _upstream_method = if is_stream {
             "streamGenerateContent"
         } else {
             "generateContent"
@@ -195,14 +195,19 @@ pub async fn handle_generate(
             );
         }
 
+        // Convert extra_headers HashMap to Vec<(String, String)> for call_copilot
+        let headers_vec: Vec<(String, String)> = extra_headers.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        let headers_ref: Option<&[(String, String)]> = if headers_vec.is_empty() { None } else { Some(&headers_vec) };
+
         let call_result = match upstream
-            .call_v1_internal_with_headers(
-                upstream_method,
-                &access_token,
-                wrapped_body,
-                query_string,
-                extra_headers.clone(),
-                Some(account_id.as_str()),
+            .call_copilot(
+                "/chat/completions",
+                &copilot_token,
+                Some(&wrapped_body),
+                headers_ref,
+                None,
+                Some(&account_id),
+                reqwest::Method::POST,
             )
             .await
         {
@@ -679,7 +684,7 @@ pub async fn handle_count_tokens(
     Json(_body): Json<Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let model_group = "gemini";
-    let (_access_token, _project_id, _, _, _wait_ms) = state
+    let (_copilot_token, _, _, _, _wait_ms) = state
         .token_manager
         .get_token(model_group, false, None, "gemini")
         .await

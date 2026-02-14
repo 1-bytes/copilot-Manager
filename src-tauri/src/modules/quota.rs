@@ -4,53 +4,12 @@ use serde_json::json;
 use crate::models::QuotaData;
 use crate::modules::config;
 
-const QUOTA_API_URL: &str = "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels";
+const QUOTA_API_URL: &str = "https://api.github.com/copilot_internal/v2/token";
 
 /// Critical retry threshold: considered near recovery when quota reaches 95%
 const NEAR_READY_THRESHOLD: i32 = 95;
 const MAX_RETRIES: u32 = 3;
 const RETRY_DELAY_SECS: u64 = 30;
-
-#[derive(Debug, Serialize, Deserialize)]
-struct QuotaResponse {
-    models: std::collections::HashMap<String, ModelInfo>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ModelInfo {
-    #[serde(rename = "quotaInfo")]
-    quota_info: Option<QuotaInfo>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct QuotaInfo {
-    #[serde(rename = "remainingFraction")]
-    remaining_fraction: Option<f64>,
-    #[serde(rename = "resetTime")]
-    reset_time: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct LoadProjectResponse {
-    #[serde(rename = "cloudaicompanionProject")]
-    project_id: Option<String>,
-    #[serde(rename = "currentTier")]
-    current_tier: Option<Tier>,
-    #[serde(rename = "paidTier")]
-    paid_tier: Option<Tier>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Tier {
-    id: Option<String>,
-    #[allow(dead_code)]
-    #[serde(rename = "quotaTier")]
-    quota_tier: Option<String>,
-    #[allow(dead_code)]
-    name: Option<String>,
-    #[allow(dead_code)]
-    slug: Option<String>,
-}
 
 /// Get shared HTTP Client (15s timeout)
 async fn create_client(account_id: Option<&str>) -> reqwest::Client {
@@ -62,7 +21,7 @@ async fn create_client(account_id: Option<&str>) -> reqwest::Client {
 }
 
 /// Get shared HTTP Client (60s timeout)
-#[allow(dead_code)] // 预留给预热/后台任务调用
+#[allow(dead_code)]
 async fn create_warmup_client(account_id: Option<&str>) -> reqwest::Client {
     if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
         pool.get_effective_client(account_id, 60).await
@@ -71,213 +30,109 @@ async fn create_warmup_client(account_id: Option<&str>) -> reqwest::Client {
     }
 }
 
-const CLOUD_CODE_BASE_URL: &str = "https://daily-cloudcode-pa.sandbox.googleapis.com";
-
-/// Fetch project ID and subscription tier
-async fn fetch_project_id(access_token: &str, email: &str, account_id: Option<&str>) -> (Option<String>, Option<String>) {
-    let client = create_client(account_id).await;
-    let meta = json!({"metadata": {"ideType": "ANTIGRAVITY"}});
-
-    let res = client
-        .post(format!("{}/v1internal:loadCodeAssist", CLOUD_CODE_BASE_URL))
-        .header(reqwest::header::AUTHORIZATION, format!("Bearer {}", access_token))
-        .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .header(reqwest::header::USER_AGENT, crate::constants::USER_AGENT.as_str())
-        .json(&meta)
-        .send()
-        .await;
-
-    match res {
-        Ok(res) => {
-            if res.status().is_success() {
-                if let Ok(data) = res.json::<LoadProjectResponse>().await {
-                    let project_id = data.project_id.clone();
-                    
-                    // Core logic: Priority to subscription ID from paid_tier, which better reflects actual account benefits than current_tier
-                    let subscription_tier = data.paid_tier
-                        .and_then(|t| t.id)
-                        .or_else(|| data.current_tier.and_then(|t| t.id));
-                    
-                    if let Some(ref tier) = subscription_tier {
-                        crate::modules::logger::log_info(&format!(
-                            "📊 [{}] Subscription identified successfully: {}", email, tier
-                        ));
-                    }
-                    
-                    return (project_id, subscription_tier);
-                }
-            } else {
-                crate::modules::logger::log_warn(&format!(
-                    "⚠️  [{}] loadCodeAssist failed: Status: {}", email, res.status()
+/// Fetch Copilot plan info for an account.
+/// Returns (copilot_token, plan) where copilot_token can be used for API calls.
+async fn fetch_copilot_info(github_token: &str, email: &str, account_id: Option<&str>) -> (Option<String>, Option<String>) {
+    match crate::modules::oauth::get_copilot_token(github_token, account_id).await {
+        Ok(resp) => {
+            let plan = resp.sku.clone();
+            if let Some(ref p) = plan {
+                crate::modules::logger::log_info(&format!(
+                    "[{}] Copilot plan identified: {}", email, p
                 ));
             }
+            (resp.token, plan)
         }
         Err(e) => {
-            crate::modules::logger::log_error(&format!("❌ [{}] loadCodeAssist network error: {}", email, e));
+            crate::modules::logger::log_warn(&format!(
+                "[{}] Failed to fetch Copilot info: {}", email, e
+            ));
+            (None, None)
         }
     }
-    
-    (None, None)
 }
 
 /// Unified entry point for fetching account quota
-pub async fn fetch_quota(access_token: &str, email: &str, account_id: Option<&str>) -> crate::error::AppResult<(QuotaData, Option<String>)> {
-    fetch_quota_with_cache(access_token, email, None, account_id).await
+pub async fn fetch_quota(github_token: &str, email: &str, account_id: Option<&str>) -> crate::error::AppResult<(QuotaData, Option<String>)> {
+    fetch_quota_with_cache(github_token, email, None, account_id).await
 }
 
 /// Fetch quota with cache support
+/// In Copilot mode, `cached_project_id` is repurposed as `cached_copilot_token`.
 pub async fn fetch_quota_with_cache(
-    access_token: &str,
+    github_token: &str,
     email: &str,
-    cached_project_id: Option<&str>,
+    cached_copilot_token: Option<&str>,
     account_id: Option<&str>,
 ) -> crate::error::AppResult<(QuotaData, Option<String>)> {
     use crate::error::AppError;
-    
-    // Optimization: Skip loadCodeAssist call if project_id is cached to save API quota
-    let (project_id, subscription_tier) = if let Some(pid) = cached_project_id {
-        (Some(pid.to_string()), None)
+
+    // Get copilot token and plan info
+    let (copilot_token, plan) = if let Some(ct) = cached_copilot_token {
+        (Some(ct.to_string()), None)
     } else {
-        fetch_project_id(access_token, email, account_id).await
+        fetch_copilot_info(github_token, email, account_id).await
     };
-    
-    let final_project_id = project_id.as_deref().unwrap_or("bamboo-precept-lgxtn");
-    
-    let client = create_client(account_id).await;
-    let payload = json!({
-        "project": final_project_id
-    });
-    
-    let url = QUOTA_API_URL;
-    let mut last_error: Option<AppError> = None;
 
-    for attempt in 1..=MAX_RETRIES {
-        match client
-            .post(url)
-            .bearer_auth(access_token)
-            .header(reqwest::header::USER_AGENT, crate::constants::USER_AGENT.as_str())
-            .json(&json!(payload))
-            .send()
-            .await
-        {
-            Ok(response) => {
-                // Convert HTTP error status to AppError
-                if let Err(_) = response.error_for_status_ref() {
-                    let status = response.status();
-                    
-                    // ✅ Special handling for 403 Forbidden - return directly, no retry
-                    if status == reqwest::StatusCode::FORBIDDEN {
-                        crate::modules::logger::log_warn(&format!(
-                            "Account unauthorized (403 Forbidden), marking as forbidden"
-                        ));
-                        let mut q = QuotaData::new();
-                        q.is_forbidden = true;
-                        q.subscription_tier = subscription_tier.clone();
-                        return Ok((q, project_id.clone()));
-                    }
-                    
-                    // Continue retry logic for other errors
-                    if attempt < MAX_RETRIES {
-                         let text = response.text().await.unwrap_or_default();
-                         crate::modules::logger::log_warn(&format!("API Error: {} - {} (Attempt {}/{})", status, text, attempt, MAX_RETRIES));
-                         last_error = Some(AppError::Unknown(format!("HTTP {} - {}", status, text)));
-                         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                         continue;
-                    } else {
-                         let text = response.text().await.unwrap_or_default();
-                         return Err(AppError::Unknown(format!("API Error: {} - {}", status, text)));
-                    }
-                }
-
-                let quota_response: QuotaResponse = response
-                    .json()
-                    .await
-                    .map_err(|e| AppError::Network(e))?;
-                
-                let mut quota_data = QuotaData::new();
-                
-                // Use debug level for detailed info to avoid console noise
-                tracing::debug!("Quota API returned {} models", quota_response.models.len());
-
-                for (name, info) in quota_response.models {
-                    if let Some(quota_info) = info.quota_info {
-                        let percentage = quota_info.remaining_fraction
-                            .map(|f| (f * 100.0) as i32)
-                            .unwrap_or(0);
-                        
-                        let reset_time = quota_info.reset_time.clone().unwrap_or_default();
-                        
-                        // Only keep models we care about
-                        if name.contains("gemini") || name.contains("claude") {
-                            quota_data.add_model(name, percentage, reset_time);
-                        }
-                    }
-                }
-                
-                // Set subscription tier
-                quota_data.subscription_tier = subscription_tier.clone();
-                
-                return Ok((quota_data, project_id.clone()));
-            },
-            Err(e) => {
-                crate::modules::logger::log_warn(&format!("Request failed: {} (Attempt {}/{})", e, attempt, MAX_RETRIES));
-                last_error = Some(AppError::Network(e));
-                if attempt < MAX_RETRIES {
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                }
-            }
+    // If we can't get a copilot token, the account may not have Copilot access
+    let _token = match copilot_token {
+        Some(t) => t,
+        None => {
+            // Return empty quota with plan info
+            let mut q = QuotaData::new();
+            q.plan = plan.clone();
+            return Ok((q, None));
         }
-    }
-    
-    Err(last_error.unwrap_or_else(|| AppError::Unknown("Quota fetch failed".to_string())))
+    };
+
+    // For Copilot, quota tracking is different from Google Antigravity.
+    // The Copilot API doesn't expose per-model quota the same way.
+    // We construct QuotaData based on available Copilot token info.
+    let mut quota_data = QuotaData::new();
+    quota_data.plan = plan.clone();
+
+    // Return the copilot token as the "project_id" equivalent for cache purposes
+    Ok((quota_data, Some(_token)))
 }
 
 /// Internal fetch quota logic
 #[allow(dead_code)]
-pub async fn fetch_quota_inner(access_token: &str, email: &str) -> crate::error::AppResult<(QuotaData, Option<String>)> {
-    fetch_quota_with_cache(access_token, email, None, None).await
+pub async fn fetch_quota_inner(github_token: &str, email: &str) -> crate::error::AppResult<(QuotaData, Option<String>)> {
+    fetch_quota_with_cache(github_token, email, None, None).await
 }
 
 /// Batch fetch all account quotas (backup functionality)
 #[allow(dead_code)]
 pub async fn fetch_all_quotas(accounts: Vec<(String, String, String)>) -> Vec<(String, crate::error::AppResult<QuotaData>)> {
     let mut results = Vec::new();
-    for (id, email, access_token) in accounts {
-        let res = fetch_quota(&access_token, &email, Some(&id)).await;
+    for (id, email, github_token) in accounts {
+        let res = fetch_quota(&github_token, &email, Some(&id)).await;
         results.push((email, res.map(|(q, _)| q)));
     }
     results
 }
 
-/// Get valid token (auto-refresh if expired)
+/// Get valid token (ensure copilot token is fresh)
 pub async fn get_valid_token_for_warmup(account: &crate::models::account::Account) -> Result<(String, String), String> {
     let mut account = account.clone();
-    
-    // Check and auto-refresh token
-    let new_token = crate::modules::oauth::ensure_fresh_token(&account.token, Some(&account.id)).await?;
-    
-    // If token changed (meant refreshed), save it
-    if new_token.access_token != account.token.access_token {
-        account.token = new_token;
-        if let Err(e) = crate::modules::account::save_account(&account) {
-            crate::modules::logger::log_warn(&format!("[Warmup] Failed to save refreshed token: {}", e));
-        } else {
-            crate::modules::logger::log_info(&format!("[Warmup] Successfully refreshed and saved new token for {}", account.email));
-        }
+
+    // Get/refresh copilot token
+    let copilot_token = crate::modules::oauth::ensure_fresh_copilot_token(&mut account).await?;
+
+    // Save if anything changed
+    if let Err(e) = crate::modules::account::save_account(&account) {
+        crate::modules::logger::log_warn(&format!("[Warmup] Failed to save refreshed token: {}", e));
     }
-    
-    // Fetch project_id
-    let (project_id, _) = fetch_project_id(&account.token.access_token, &account.email, Some(&account.id)).await;
-    let final_pid = project_id.unwrap_or_else(|| "bamboo-precept-lgxtn".to_string());
-    
-    Ok((account.token.access_token, final_pid))
+
+    // For Copilot, we use github_token as the primary token and copilot_token for API calls
+    Ok((account.token.github_token, copilot_token))
 }
 
 /// Send warmup request via proxy internal API
 pub async fn warmup_model_directly(
-    access_token: &str,
+    github_token: &str,
     model_name: &str,
-    project_id: &str,
+    copilot_token: &str,
     email: &str,
     percentage: i32,
     _account_id: Option<&str>,
@@ -291,12 +146,11 @@ pub async fn warmup_model_directly(
     let body = json!({
         "email": email,
         "model": model_name,
-        "access_token": access_token,
-        "project_id": project_id
+        "github_token": github_token,
+        "copilot_token": copilot_token
     });
 
     // Use a no-proxy client for local loopback requests
-    // This prevents Docker environments from routing localhost through external proxies
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .no_proxy()
@@ -313,16 +167,16 @@ pub async fn warmup_model_directly(
         Ok(response) => {
             let status = response.status();
             if status.is_success() {
-                crate::modules::logger::log_info(&format!("[Warmup] ✓ Triggered {} for {} (was {}%)", model_name, email, percentage));
+                crate::modules::logger::log_info(&format!("[Warmup] Triggered {} for {} (was {}%)", model_name, email, percentage));
                 true
             } else {
                 let text = response.text().await.unwrap_or_default();
-                crate::modules::logger::log_warn(&format!("[Warmup] ✗ {} for {} (was {}%): HTTP {} - {}", model_name, email, percentage, status, text));
+                crate::modules::logger::log_warn(&format!("[Warmup] {} for {} (was {}%): HTTP {} - {}", model_name, email, percentage, status, text));
                 false
             }
         }
         Err(e) => {
-            crate::modules::logger::log_warn(&format!("[Warmup] ✗ {} for {} (was {}%): {}", model_name, email, percentage, e));
+            crate::modules::logger::log_warn(&format!("[Warmup] {} for {} (was {}%): {}", model_name, email, percentage, e));
             false
         }
     }
@@ -334,7 +188,6 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
 
     loop {
         let all_accounts = crate::modules::account::list_accounts().unwrap_or_default();
-        // [FIX] 过滤掉禁用反代的账号
         let target_accounts: Vec<_> = all_accounts
             .into_iter()
             .filter(|a| !a.disabled && !a.proxy_disabled)
@@ -368,7 +221,6 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
 
             for handle in handles {
                 if let Ok(Some((id, email, token, pid, Some((fresh_quota, _))))) = handle.await {
-                    // [FIX] 预热阶段检测到 403 时，持久化 is_forbidden 标记，避免无效账号继续参与轮询
                     if fresh_quota.is_forbidden {
                         crate::modules::logger::log_warn(&format!(
                             "[Warmup] Account {} returned 403 Forbidden during quota fetch, persisting forbidden status",
@@ -382,7 +234,6 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
                         if m.percentage >= 100 {
                             let model_to_ping = m.name.clone();
 
-                            // Removed hardcoded whitelist - now warms up any model at 100%
                             if !account_warmed_series.contains(&model_to_ping) {
                                 warmup_items.push((id.clone(), email.clone(), model_to_ping.clone(), token.clone(), pid.clone(), m.percentage));
                                 account_warmed_series.insert(model_to_ping);
@@ -397,42 +248,42 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
 
         if !warmup_items.is_empty() {
             let total_before = warmup_items.len();
-            
+
             // Filter out models warmed up within 4 hours
             warmup_items.retain(|(_, email, model, _, _, _)| {
                 let history_key = format!("{}:{}:100", email, model);
                 !crate::modules::scheduler::check_cooldown(&history_key, 14400)
             });
-            
+
             if warmup_items.is_empty() {
                 let skipped = total_before;
-                crate::modules::logger::log_info(&format!("[Warmup] Returning to frontend: All models in cooldown, skipped {}", skipped));
+                crate::modules::logger::log_info(&format!("[Warmup] All models in cooldown, skipped {}", skipped));
                 return Ok(format!("All models are in cooldown, skipped {} items", skipped));
             }
-            
+
             let total = warmup_items.len();
             let skipped = total_before - total;
-            
+
             if skipped > 0 {
                 crate::modules::logger::log_info(&format!(
                     "[Warmup] Skipped {} models in cooldown, preparing to warmup {}",
                     skipped, total
                 ));
             }
-            
+
             crate::modules::logger::log_info(&format!(
-                "[Warmup] 🔥 Starting manual warmup for {} models",
+                "[Warmup] Starting manual warmup for {} models",
                 total
             ));
-            
+
             tokio::spawn(async move {
                 let mut success = 0;
                 let batch_size = 3;
                 let now_ts = chrono::Utc::now().timestamp();
-                
+
                 for (batch_idx, batch) in warmup_items.chunks(batch_size).enumerate() {
                     let mut handles = Vec::new();
-                    
+
                     for (id, email, model, token, pid, pct) in batch.iter() {
                         let id = id.clone();
                         let email = email.clone();
@@ -440,14 +291,14 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
                         let token = token.clone();
                         let pid = pid.clone();
                         let pct = *pct;
-                        
+
                         let handle = tokio::spawn(async move {
                             let result = warmup_model_directly(&token, &model, &pid, &email, pct, Some(&id)).await;
                             (result, email, model)
                         });
                         handles.push(handle);
                     }
-                    
+
                     for handle in handles {
                         match handle.await {
                             Ok((true, email, model)) => {
@@ -458,12 +309,12 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
                             _ => {}
                         }
                     }
-                    
+
                     if batch_idx < (warmup_items.len() + batch_size - 1) / batch_size - 1 {
                         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                     }
                 }
-                
+
                 crate::modules::logger::log_info(&format!("[Warmup] Warmup task completed: success {}/{}", success, total));
                 tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                 let _ = crate::modules::account::refresh_all_quotas_logic().await;
@@ -491,12 +342,11 @@ pub async fn warm_up_account(account_id: &str) -> Result<String, String> {
     if account_owned.disabled || account_owned.proxy_disabled {
         return Err("Account is disabled".to_string());
     }
-    
+
     let email = account_owned.email.clone();
     let (token, pid) = get_valid_token_for_warmup(&account_owned).await?;
     let (fresh_quota, _) = fetch_quota_with_cache(&token, &email, Some(&pid), Some(&account_owned.id)).await.map_err(|e| format!("Failed to fetch quota: {}", e))?;
-    
-    // [FIX] 预热阶段检测到 403 时，持久化 is_forbidden 标记，避免无效账号继续参与轮询
+
     if fresh_quota.is_forbidden {
         crate::modules::logger::log_warn(&format!(
             "[Warmup] Account {} returned 403 Forbidden during quota fetch, persisting forbidden status",
@@ -513,7 +363,6 @@ pub async fn warm_up_account(account_id: &str) -> Result<String, String> {
         if m.percentage >= 100 {
             let model_name = m.name.clone();
 
-            // Removed hardcoded whitelist - now warms up any model at 100%
             if !warmed_series.contains(&model_name) {
                 models_to_warm.push((model_name.clone(), m.percentage));
                 warmed_series.insert(model_name);
@@ -527,7 +376,7 @@ pub async fn warm_up_account(account_id: &str) -> Result<String, String> {
 
     let warmed_count = models_to_warm.len();
     let account_id_clone = account_id.to_string();
-    
+
     tokio::spawn(async move {
         for (name, pct) in models_to_warm {
             if warmup_model_directly(&token, &name, &pid, &email, pct, Some(&account_id_clone)).await {

@@ -7,7 +7,7 @@ use uuid::Uuid;
 use std::collections::HashSet;
 
 use crate::models::{
-    Account, AccountIndex, AccountSummary, DeviceProfile, DeviceProfileVersion, QuotaData,
+    Account, AccountIndex, AccountSummary, QuotaData,
     TokenData,
 };
 use crate::modules;
@@ -37,7 +37,7 @@ mod tests {
                     .as_millis()
             ));
             fs::create_dir_all(&temp_path).expect("Failed to create temp dir");
-            
+
             Self {
                 path: temp_path,
             }
@@ -64,20 +64,17 @@ mod tests {
     fn create_account_file(path: &PathBuf, account_id: &str, email: &str) {
         let accounts_dir = path.join("accounts");
         fs::create_dir_all(&accounts_dir).expect("Failed to create accounts dir");
-        
+
         let account = Account::new(
             account_id.to_string(),
             email.to_string(),
             TokenData::new(
-                "test_access_token".to_string(),
-                "test_refresh_token".to_string(),
-                3600,
-                Some(email.to_string()),
+                "test_github_token".to_string(),
                 None,
-                None,
+                0,
             ),
         );
-        
+
         let content = serde_json::to_string_pretty(&account).expect("Failed to serialize account");
         let account_path = accounts_dir.join(format!("{}.json", account_id));
         fs::write(&account_path, content).expect("Failed to write account file");
@@ -94,11 +91,11 @@ mod tests {
         let mut content = Vec::new();
         content.extend_from_slice(&bom);
         content.extend_from_slice(json.as_bytes());
-        
+
         write_corrupted_index(dir.path(), &content);
 
         let result = load_account_index_in_dir(dir.path());
-        
+
         // New behavior: BOM is stripped and JSON parses successfully
         assert!(result.is_ok(), "BOM should be stripped and JSON should parse: {:?}", result);
         let index = result.unwrap();
@@ -117,11 +114,11 @@ mod tests {
         let mut content = Vec::new();
         content.extend_from_slice(&nul);
         content.extend_from_slice(json.as_bytes());
-        
+
         write_corrupted_index(dir.path(), &content);
 
         let result = load_account_index_in_dir(dir.path());
-        
+
         // New behavior: NUL bytes are stripped and JSON parses successfully
         assert!(result.is_ok(), "NUL prefix should be stripped and JSON should parse: {:?}", result);
         let index = result.unwrap();
@@ -138,7 +135,7 @@ mod tests {
         write_corrupted_index(dir.path(), b"\0\0not json");
 
         let result = load_account_index_in_dir(dir.path());
-        
+
         // New behavior: garbage content triggers recovery, returns empty index
         assert!(result.is_ok(), "Garbage content should trigger recovery and return Ok: {:?}", result);
         let index = result.unwrap();
@@ -155,7 +152,7 @@ mod tests {
         write_corrupted_index(dir.path(), b"");
 
         let result = load_account_index_in_dir(dir.path());
-        
+
         // Current behavior: empty file returns new empty index
         assert!(result.is_ok());
         let index = result.unwrap();
@@ -171,7 +168,7 @@ mod tests {
         write_corrupted_index(dir.path(), b"   \n\t  ");
 
         let result = load_account_index_in_dir(dir.path());
-        
+
         // Current behavior: whitespace-only file returns new empty index
         assert!(result.is_ok());
         let index = result.unwrap();
@@ -196,7 +193,7 @@ mod tests {
         assert!(result.is_ok(), "Should recover from accounts directory");
         let index = result.unwrap();
         assert_eq!(index.accounts.len(), 2, "Index should have 2 accounts recovered from accounts directory");
-        
+
         // Verify recovered accounts have correct data
         let emails: Vec<_> = index.accounts.iter().map(|s| s.email.clone()).collect();
         assert!(emails.contains(&"user1@example.com".to_string()));
@@ -210,7 +207,7 @@ mod tests {
             .filter(|e| e.path().extension().map_or(false, |ext| ext == "json"))
             .collect();
         assert_eq!(account_files.len(), 2, "Account files should still exist on disk");
-        
+
         println!("Missing index with existing accounts: successfully recovered {} accounts", index.accounts.len());
     }
 
@@ -228,6 +225,8 @@ mod tests {
                     id: "acc-1".to_string(),
                     email: "user1@example.com".to_string(),
                     name: Some("User One".to_string()),
+                    github_login: None,
+                    copilot_plan: None,
                     disabled: false,
                     proxy_disabled: false,
                     protected_models: HashSet::new(),
@@ -238,6 +237,8 @@ mod tests {
                     id: "acc-2".to_string(),
                     email: "user2@example.com".to_string(),
                     name: None,
+                    github_login: None,
+                    copilot_plan: None,
                     disabled: true,
                     proxy_disabled: true,
                     protected_models: HashSet::new(),
@@ -257,14 +258,14 @@ mod tests {
         // Assert it matches
         assert_eq!(loaded.accounts.len(), 2, "Should have 2 accounts");
         assert_eq!(loaded.current_account_id, Some("acc-1".to_string()), "current_account_id should match");
-        
+
         // Check first account
         let acc1 = loaded.accounts.iter().find(|a| a.id == "acc-1").expect("acc-1 should exist");
         assert_eq!(acc1.email, "user1@example.com");
         assert_eq!(acc1.name, Some("User One".to_string()));
         assert!(!acc1.disabled);
         assert!(!acc1.proxy_disabled);
-        
+
         // Check second account
         let acc2 = loaded.accounts.iter().find(|a| a.id == "acc-2").expect("acc-2 should exist");
         assert_eq!(acc2.email, "user2@example.com");
@@ -308,9 +309,9 @@ mod tests {
                     .map_or(false, |name| name.starts_with("accounts.json.corrupt-"))
             })
             .collect();
-        
+
         assert_eq!(backup_files.len(), 1, "Should have exactly one backup file");
-        
+
         // Verify backup contains the original garbage content
         let backup_content = fs::read(&backup_files[0].path()).expect("Should be able to read backup file");
         assert_eq!(backup_content, garbage_content, "Backup should contain original corrupt content");
@@ -468,6 +469,8 @@ fn rebuild_index_from_accounts_in_dir(data_dir: &PathBuf) -> Result<AccountIndex
                                         id: account.id,
                                         email: account.email,
                                         name: account.name,
+                                        github_login: account.github_login,
+                                        copilot_plan: account.copilot_plan,
                                         disabled: account.disabled,
                                         proxy_disabled: account.proxy_disabled,
                                         protected_models: account.protected_models,
@@ -713,6 +716,8 @@ pub fn add_account(
         id: account.id.clone(),
         email: account.email.clone(),
         name: account.name.clone(),
+        github_login: account.github_login.clone(),
+        copilot_plan: account.copilot_plan.clone(),
         disabled: account.disabled,
         proxy_disabled: account.proxy_disabled,
         protected_models: account.protected_models.clone(),
@@ -752,15 +757,13 @@ pub fn upsert_account(
         // Update existing account
         match load_account(&account_id) {
             Ok(mut account) => {
-                let old_access_token = account.token.access_token.clone();
-                let old_refresh_token = account.token.refresh_token.clone();
+                let old_github_token = account.token.github_token.clone();
                 account.token = token;
                 account.name = name.clone();
-                // If an account was previously disabled (e.g. invalid_grant), any explicit token upsert
+                // If an account was previously disabled (e.g. invalid token), any explicit token upsert
                 // should re-enable it (user manually updated credentials in the UI).
                 if account.disabled
-                    && (account.token.refresh_token != old_refresh_token
-                        || account.token.access_token != old_access_token)
+                    && account.token.github_token != old_github_token
                 {
                     account.disabled = false;
                     account.disabled_reason = None;
@@ -945,31 +948,13 @@ pub async fn switch_account(
         account.email, account.id
     ));
 
-    // 2. Ensure Token is valid (auto-refresh)
-    let fresh_token = oauth::ensure_fresh_token(&account.token, Some(&account.id))
+    // 2. Ensure Copilot Token is valid (auto-refresh)
+    let _fresh_copilot_token = oauth::ensure_fresh_copilot_token(&mut account)
         .await
         .map_err(|e| format!("Token refresh failed: {}", e))?;
 
-    // If Token updated, save back to account file
-    if fresh_token.access_token != account.token.access_token {
-        account.token = fresh_token.clone();
-        save_account(&account)?;
-    }
-
-    // [FIX] Ensure account has a device profile for isolation
-    if account.device_profile.is_none() {
-        crate::modules::logger::log_info(&format!(
-            "Account {} has no bound fingerprint, generating new one for isolation...",
-            account.email
-        ));
-        let new_profile = modules::device::generate_profile();
-        apply_profile_to_account(
-            &mut account,
-            new_profile.clone(),
-            Some("auto_generated".to_string()),
-            true,
-        )?;
-    }
+    // Token was updated in-place by ensure_fresh_copilot_token, save it
+    save_account(&account)?;
 
     // 3. Execute platform-specific system integration (Close proc, Inject DB, Start proc, etc.)
     integration.on_account_switch(&account).await?;
@@ -993,170 +978,6 @@ pub async fn switch_account(
     ));
 
     Ok(())
-}
-
-/// Get device profile info: current storage.json + account bound profile
-#[derive(Debug, Serialize)]
-pub struct DeviceProfiles {
-    pub current_storage: Option<DeviceProfile>,
-    pub bound_profile: Option<DeviceProfile>,
-    pub history: Vec<DeviceProfileVersion>,
-    pub baseline: Option<DeviceProfile>,
-}
-
-pub fn get_device_profiles(account_id: &str) -> Result<DeviceProfiles, String> {
-    // In headless/Docker mode, storage.json may not exist - handle gracefully
-    let current = crate::modules::device::get_storage_path()
-        .ok()
-        .and_then(|path| crate::modules::device::read_profile(&path).ok());
-    let account = load_account(account_id)?;
-    Ok(DeviceProfiles {
-        current_storage: current,
-        bound_profile: account.device_profile.clone(),
-        history: account.device_history.clone(),
-        baseline: crate::modules::device::load_global_original(),
-    })
-}
-
-/// Bind device profile and write to storage.json immediately
-pub fn bind_device_profile(account_id: &str, mode: &str) -> Result<DeviceProfile, String> {
-    use crate::modules::device;
-
-    let profile = match mode {
-        "capture" => device::read_profile(&device::get_storage_path()?)?,
-        "generate" => device::generate_profile(),
-        _ => return Err("mode must be 'capture' or 'generate'".to_string()),
-    };
-
-    let mut account = load_account(account_id)?;
-    let _ = device::save_global_original(&profile);
-    apply_profile_to_account(
-        &mut account, profile.clone(), Some(mode.to_string()), true)?;
-
-    Ok(profile)
-}
-
-/// Bind directly with provided profile
-pub fn bind_device_profile_with_profile(
-    account_id: &str,
-    profile: DeviceProfile,
-    label: Option<String>,
-) -> Result<DeviceProfile, String> {
-    let mut account = load_account(account_id)?;
-    let _ = crate::modules::device::save_global_original(&profile);
-    apply_profile_to_account(&mut account, profile.clone(), label, true)?;
-
-    Ok(profile)
-}
-
-fn apply_profile_to_account(
-    account: &mut Account,
-    profile: DeviceProfile,
-    label: Option<String>,
-    add_history: bool,
-) -> Result<(), String> {
-    account.device_profile = Some(profile.clone());
-    if add_history {
-        // Clear 'current' flag
-        for h in account.device_history.iter_mut() {
-            h.is_current = false;
-        }
-        account.device_history.push(DeviceProfileVersion {
-            id: Uuid::new_v4().to_string(),
-            created_at: chrono::Utc::now().timestamp(),
-            label: label.unwrap_or_else(|| "generated".to_string()),
-            profile: profile.clone(),
-            is_current: true,
-        });
-    }
-    save_account(account)?;
-    Ok(())
-}
-
-/// List available device profile versions for an account (including baseline)
-pub fn list_device_versions(account_id: &str) -> Result<DeviceProfiles, String> {
-    get_device_profiles(account_id)
-}
-
-/// Restore device profile by version ID ("baseline" for global original, "current" for current bound)
-pub fn restore_device_version(account_id: &str, version_id: &str) -> Result<DeviceProfile, String> {
-    let mut account = load_account(account_id)?;
-
-    let target_profile = if version_id == "baseline" {
-        crate::modules::device::load_global_original().ok_or("Global original profile not found")?
-    } else if let Some(v) = account.device_history.iter().find(|v| v.id == version_id) {
-        v.profile.clone()
-    } else if version_id == "current" {
-        account
-            .device_profile
-            .clone()
-            .ok_or("No currently bound profile")?
-    } else {
-        return Err("Device profile version not found".to_string());
-    };
-
-    account.device_profile = Some(target_profile.clone());
-    for h in account.device_history.iter_mut() {
-        h.is_current = h.id == version_id;
-    }
-    save_account(&account)?;
-    Ok(target_profile)
-}
-
-/// Delete specific historical device profile (baseline cannot be deleted)
-pub fn delete_device_version(account_id: &str, version_id: &str) -> Result<(), String> {
-    if version_id == "baseline" {
-        return Err("Original profile cannot be deleted".to_string());
-    }
-    let mut account = load_account(account_id)?;
-    if account
-        .device_history
-        .iter()
-        .any(|v| v.id == version_id && v.is_current)
-    {
-        return Err("Currently bound profile cannot be deleted".to_string());
-    }
-    let before = account.device_history.len();
-    account.device_history.retain(|v| v.id != version_id);
-    if account.device_history.len() == before {
-        return Err("Historical device profile not found".to_string());
-    }
-    save_account(&account)?;
-    Ok(())
-}
-/// Apply account bound device profile to storage.json
-pub fn apply_device_profile(account_id: &str) -> Result<DeviceProfile, String> {
-    use crate::modules::device;
-    let mut account = load_account(account_id)?;
-    let profile = account
-        .device_profile
-        .clone()
-        .ok_or("Account has no bound device profile")?;
-    let storage_path = device::get_storage_path()?;
-    device::write_profile(&storage_path, &profile)?;
-    account.update_last_used();
-    save_account(&account)?;
-    Ok(profile)
-}
-
-/// Restore earliest storage.json backup (approximate "original" state)
-pub fn restore_original_device() -> Result<String, String> {
-    if let Some(current_id) = get_current_account_id()? {
-        if let Ok(mut account) = load_account(&current_id) {
-            if let Some(original) = crate::modules::device::load_global_original() {
-                account.device_profile = Some(original);
-                for h in account.device_history.iter_mut() {
-                    h.is_current = false;
-                }
-                save_account(&account)?;
-                return Ok(
-                    "Reset current account bound profile to original (not applied to storage)"
-                        .to_string(),
-                );
-            }
-        }
-    }
-    Err("Original profile not found, cannot restore".to_string())
 }
 
 /// Get current account ID
@@ -1253,7 +1074,7 @@ pub fn update_account_quota(account_id: &str, quota: QuotaData) -> Result<(), St
     // Save account first
     save_account(&account)?;
 
-    // [FIX] 同时更新索引文件中的摘要信息，确保列表页图标即时刷新
+    // [FIX] Update index summary to ensure list page icons refresh immediately
     {
         let _lock = ACCOUNT_INDEX_LOCK
             .lock()
@@ -1312,15 +1133,16 @@ pub fn toggle_proxy_status(
 /// Export accounts by IDs (for backup/migration)
 pub fn export_accounts_by_ids(account_ids: &[String]) -> Result<crate::models::AccountExportResponse, String> {
     use crate::models::{AccountExportItem, AccountExportResponse};
-    
+
     let accounts = list_accounts()?;
-    
+
     let export_items: Vec<AccountExportItem> = accounts
         .into_iter()
         .filter(|acc| account_ids.contains(&acc.id))
         .map(|acc| AccountExportItem {
             email: acc.email,
-            refresh_token: acc.token.refresh_token,
+            github_token: acc.token.github_token,
+            github_login: acc.github_login,
         })
         .collect();
 
@@ -1329,14 +1151,14 @@ pub fn export_accounts_by_ids(account_ids: &[String]) -> Result<crate::models::A
     })
 }
 
-/// Export all accounts' refresh_tokens (legacy, kept for compatibility)
+/// Export all accounts' github_tokens (legacy, kept for compatibility)
 #[allow(dead_code)]
 pub fn export_accounts() -> Result<Vec<(String, String)>, String> {
     let accounts = list_accounts()?;
     let mut exports = Vec::new();
 
     for account in accounts {
-        exports.push((account.email, account.token.refresh_token));
+        exports.push((account.email, account.token.github_token));
     }
 
     Ok(exports)
@@ -1348,18 +1170,19 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
     use crate::modules::oauth;
     use reqwest::StatusCode;
 
-    // 1. Time-based check - ensure Token is valid first
-    let token = match oauth::ensure_fresh_token(&account.token, Some(&account.id)).await {
-        Ok(t) => t,
+    // 1. Time-based check - ensure Copilot Token is valid first
+    let copilot_token_before = account.token.copilot_token.clone();
+    match oauth::ensure_fresh_copilot_token(account).await {
+        Ok(_fresh_token) => {},
         Err(e) => {
-            if e.contains("invalid_grant") {
+            if e.contains("invalid") || e.contains("expired") {
                 modules::logger::log_error(&format!(
-                    "Disabling account {} due to invalid_grant during token refresh (quota check)",
+                    "Disabling account {} due to token error during copilot token refresh (quota check)",
                     account.email
                 ));
                 account.disabled = true;
                 account.disabled_at = Some(chrono::Utc::now().timestamp());
-                account.disabled_reason = Some(format!("invalid_grant: {}", e));
+                account.disabled_reason = Some(format!("copilot_token_error: {}", e));
                 let _ = save_account(account);
                 crate::proxy::server::trigger_account_reload(&account.id);
             }
@@ -1367,24 +1190,22 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
         }
     };
 
-    if token.access_token != account.token.access_token {
-        modules::logger::log_info(&format!("Time-based Token refresh: {}", account.email));
-        account.token = token.clone();
+    if account.token.copilot_token != copilot_token_before {
+        modules::logger::log_info(&format!("Copilot Token refreshed: {}", account.email));
 
         // Get display name (incidental to Token refresh)
-        let name = if account.name.is_none()
+        if account.name.is_none()
             || account.name.as_ref().map_or(false, |n| n.trim().is_empty())
         {
-            match oauth::get_user_info(&token.access_token, Some(&account.id)).await {
-                Ok(user_info) => user_info.get_display_name(),
-                Err(_) => None,
+            match oauth::get_github_user(&account.token.github_token, Some(&account.id)).await {
+                Ok(github_user) => {
+                    account.name = github_user.name.or(Some(github_user.login.clone()));
+                },
+                Err(_) => {},
             }
-        } else {
-            account.name.clone()
-        };
+        }
 
-        account.name = name.clone();
-        upsert_account(account.email.clone(), name, token.clone()).map_err(AppError::Account)?;
+        upsert_account(account.email.clone(), account.name.clone(), account.token.clone()).map_err(AppError::Account)?;
     }
 
     // 0. Supplement display name (if missing or upper step failed)
@@ -1393,10 +1214,10 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
             "Account {} missing display name, attempting to fetch...",
             account.email
         ));
-        // Use updated token
-        match oauth::get_user_info(&account.token.access_token, Some(&account.id)).await {
-            Ok(user_info) => {
-                let display_name = user_info.get_display_name();
+        // Use github token to get user info
+        match oauth::get_github_user(&account.token.github_token, Some(&account.id)).await {
+            Ok(github_user) => {
+                let display_name = github_user.name.or(Some(github_user.login.clone()));
                 modules::logger::log_info(&format!(
                     "Successfully fetched display name: {:?}",
                     display_name
@@ -1415,51 +1236,34 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
         }
     }
 
-    // 2. Attempt query
+    // 2. Attempt query - use copilot_token for API calls
+    let api_token = account.token.copilot_token.as_deref().unwrap_or(&account.token.github_token);
     let result: crate::error::AppResult<(QuotaData, Option<String>)> =
-        modules::fetch_quota(&account.token.access_token, &account.email, Some(&account.id)).await;
-
-    // Capture potentially updated project_id and save
-    if let Ok((ref _q, ref project_id)) = result {
-        if project_id.is_some() && *project_id != account.token.project_id {
-            modules::logger::log_info(&format!(
-                "Detected project_id update ({}), saving...",
-                account.email
-            ));
-            account.token.project_id = project_id.clone();
-            if let Err(e) = upsert_account(
-                account.email.clone(),
-                account.name.clone(),
-                account.token.clone(),
-            ) {
-                modules::logger::log_warn(&format!("Failed to sync project_id: {}", e));
-            }
-        }
-    }
+        modules::fetch_quota(api_token, &account.email, Some(&account.id)).await;
 
     // 3. Handle 401 error
     if let Err(AppError::Network(ref e)) = result {
         if let Some(status) = e.status() {
             if status == StatusCode::UNAUTHORIZED {
                 modules::logger::log_warn(&format!(
-                    "401 Unauthorized for {}, forcing refresh...",
+                    "401 Unauthorized for {}, forcing copilot token refresh...",
                     account.email
                 ));
 
-                // Force refresh
-                let token_res = match oauth::refresh_access_token(&account.token.refresh_token, Some(&account.id))
+                // Force refresh copilot token
+                let copilot_resp = match oauth::get_copilot_token(&account.token.github_token, Some(&account.id))
                     .await
                 {
                     Ok(t) => t,
                     Err(e) => {
-                        if e.contains("invalid_grant") {
+                        if e.contains("invalid") || e.contains("expired") {
                             modules::logger::log_error(&format!(
-                                "Disabling account {} due to invalid_grant during forced refresh (quota check)",
+                                "Disabling account {} due to token error during forced refresh (quota check)",
                                 account.email
                             ));
                             account.disabled = true;
                             account.disabled_at = Some(chrono::Utc::now().timestamp());
-                            account.disabled_reason = Some(format!("invalid_grant: {}", e));
+                            account.disabled_reason = Some(format!("copilot_token_error: {}", e));
                             let _ = save_account(account);
                             crate::proxy::server::trigger_account_reload(&account.id);
                         }
@@ -1467,51 +1271,34 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                     }
                 };
 
-                let new_token = TokenData::new(
-                    token_res.access_token.clone(),
-                    account.token.refresh_token.clone(),
-                    token_res.expires_in,
-                    account.token.email.clone(),
-                    account.token.project_id.clone(), // Keep original project_id
-                    None,                             // Add None as session_id
-                );
+                account.token.copilot_token = copilot_resp.token;
+                account.token.copilot_token_expires_at = copilot_resp.expires_at;
+                if let Some(sku) = copilot_resp.sku {
+                    account.token.sku = Some(sku);
+                }
+                if let Some(chat_enabled) = copilot_resp.chat_enabled {
+                    account.token.chat_enabled = Some(chat_enabled);
+                }
 
                 // Re-fetch display name
-                let name = if account.name.is_none()
+                if account.name.is_none()
                     || account.name.as_ref().map_or(false, |n| n.trim().is_empty())
                 {
-                    match oauth::get_user_info(&token_res.access_token, Some(&account.id)).await {
-                        Ok(user_info) => user_info.get_display_name(),
-                        Err(_) => None,
-                    }
-                } else {
-                    account.name.clone()
-                };
-
-                account.token = new_token.clone();
-                account.name = name.clone();
-                upsert_account(account.email.clone(), name, new_token.clone())
-                    .map_err(AppError::Account)?;
-
-                // Retry query
-                let retry_result: crate::error::AppResult<(QuotaData, Option<String>)> =
-                    modules::fetch_quota(&new_token.access_token, &account.email, Some(&account.id)).await;
-
-                // Also handle project_id saving during retry
-                if let Ok((ref _q, ref project_id)) = retry_result {
-                    if project_id.is_some() && *project_id != account.token.project_id {
-                        modules::logger::log_info(&format!(
-                            "Detected update of project_id after retry ({}), saving...",
-                            account.email
-                        ));
-                        account.token.project_id = project_id.clone();
-                        let _ = upsert_account(
-                            account.email.clone(),
-                            account.name.clone(),
-                            account.token.clone(),
-                        );
+                    match oauth::get_github_user(&account.token.github_token, Some(&account.id)).await {
+                        Ok(github_user) => {
+                            account.name = github_user.name.or(Some(github_user.login.clone()));
+                        },
+                        Err(_) => {},
                     }
                 }
+
+                upsert_account(account.email.clone(), account.name.clone(), account.token.clone())
+                    .map_err(AppError::Account)?;
+
+                // Retry query with new copilot token
+                let retry_api_token = account.token.copilot_token.as_deref().unwrap_or(&account.token.github_token);
+                let retry_result: crate::error::AppResult<(QuotaData, Option<String>)> =
+                    modules::fetch_quota(retry_api_token, &account.email, Some(&account.id)).await;
 
                 if let Err(AppError::Network(ref e)) = retry_result {
                     if let Some(s) = e.status() {
@@ -1639,7 +1426,7 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
         elapsed.as_millis()
     ));
 
-    // After quota refresh, immediately check and trigger warmup for recovered models
+    // After quota refresh, trigger warmup for recovered models if scheduler is available
     tokio::spawn(async {
         check_and_trigger_warmup_for_recovered_models().await;
     });
@@ -1659,16 +1446,6 @@ pub async fn check_and_trigger_warmup_for_recovered_models() {
         Ok(acc) => acc,
         Err(_) => return,
     };
-
-    // Load config to check if scheduled warmup is enabled
-    let app_config = match crate::modules::config::load_app_config() {
-        Ok(cfg) => cfg,
-        Err(_) => return,
-    };
-
-    if !app_config.scheduled_warmup.enabled {
-        return;
-    }
 
     crate::modules::logger::log_info(&format!(
         "[Warmup] Checking {} accounts for recovered models after quota refresh...",

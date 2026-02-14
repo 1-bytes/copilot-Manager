@@ -38,14 +38,13 @@ fn create_test_token(
 
     ProxyToken {
         account_id: email.to_string(),
-        access_token: "test_token".to_string(),
-        refresh_token: "test_refresh".to_string(),
-        expires_in: 3600,
-        timestamp: chrono::Utc::now().timestamp() + 3600,
+        github_token: "test_token".to_string(),
+        copilot_token: None,
+        copilot_token_expires_at: 0,
+        account_type: None,
         email: email.to_string(),
         account_path: PathBuf::from("/tmp/test"),
-        project_id: None,
-        subscription_tier: tier.map(|s| s.to_string()),
+        copilot_plan: tier.map(|s| s.to_string()),
         remaining_quota,
         protected_models: HashSet::new(),
         health_score,
@@ -100,8 +99,8 @@ fn compare_tokens_for_model(a: &ProxyToken, b: &ProxyToken, _target_model: &str)
     };
 
     // Priority 0: 始终优先订阅等级 (Ultra > Pro > Free)
-    let tier_cmp = tier_priority(&a.subscription_tier)
-        .cmp(&tier_priority(&b.subscription_tier));
+    let tier_cmp = tier_priority(&a.copilot_plan)
+        .cmp(&tier_priority(&b.copilot_plan));
     if tier_cmp != Ordering::Equal {
         return tier_cmp;
     }

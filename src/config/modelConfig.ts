@@ -1,4 +1,4 @@
-import { Gemini, Claude } from '@lobehub/icons';
+import { Gemini, Claude, OpenAI } from '@lobehub/icons';
 
 /**
  * 模型配置接口
@@ -17,72 +17,105 @@ export interface ModelConfig {
 /**
  * 模型配置映射
  * 键为模型 ID，值为模型配置
+ * Copilot-supported models only
  */
 export const MODEL_CONFIG: Record<string, ModelConfig> = {
-    // Gemini 3.x 系列
-    'gemini-3-pro-high': {
-        label: 'Gemini 3 Pro High',
-        shortLabel: 'G3 Pro',
-        protectedKey: 'gemini-pro',
-        Icon: Gemini.Color,
+    // GPT 系列
+    'gpt-4o': {
+        label: 'GPT-4o',
+        shortLabel: 'GPT-4o',
+        protectedKey: 'gpt-4o',
+        Icon: OpenAI,
     },
-    'gemini-3-flash': {
-        label: 'Gemini 3 Flash',
-        shortLabel: 'G3 Flash',
-        protectedKey: 'gemini-flash',
-        Icon: Gemini.Color,
+    'gpt-4o-mini': {
+        label: 'GPT-4o Mini',
+        shortLabel: 'GPT-4o Mini',
+        protectedKey: 'gpt-4o-mini',
+        Icon: OpenAI,
     },
-    'gemini-3-pro-image': {
-        label: 'Gemini 3 Image',
-        shortLabel: 'G3 Image',
-        protectedKey: 'gemini-3-pro-image',
-        Icon: Gemini.Color,
+    'gpt-4.1': {
+        label: 'GPT-4.1',
+        shortLabel: 'GPT-4.1',
+        protectedKey: 'gpt-4.1',
+        Icon: OpenAI,
     },
-    'gemini-3-pro-low': {
-        label: 'Gemini 3 Pro Low',
-        shortLabel: 'G3 Low',
-        protectedKey: 'gemini-pro',
-        Icon: Gemini.Color,
+    'gpt-4.1-mini': {
+        label: 'GPT-4.1 Mini',
+        shortLabel: 'GPT-4.1 Mini',
+        protectedKey: 'gpt-4.1-mini',
+        Icon: OpenAI,
+    },
+    'gpt-4.1-nano': {
+        label: 'GPT-4.1 Nano',
+        shortLabel: 'GPT-4.1 Nano',
+        protectedKey: 'gpt-4.1-nano',
+        Icon: OpenAI,
     },
 
-    // Gemini 2.5 系列
-    'gemini-2.5-flash': {
-        label: 'Gemini 2.5 Flash',
-        shortLabel: 'G2.5 Flash',
-        protectedKey: 'gemini-flash',
-        Icon: Gemini.Color,
+    // O 系列
+    'o1': {
+        label: 'O1',
+        shortLabel: 'O1',
+        protectedKey: 'o1',
+        Icon: OpenAI,
     },
-    'gemini-2.5-flash-lite': {
-        label: 'Gemini 2.5 Flash Lite',
-        shortLabel: 'G2.5 Lite',
-        protectedKey: 'gemini-flash',
-        Icon: Gemini.Color,
+    'o1-mini': {
+        label: 'O1 Mini',
+        shortLabel: 'O1 Mini',
+        protectedKey: 'o1-mini',
+        Icon: OpenAI,
     },
-    'gemini-2.5-flash-thinking': {
-        label: 'Gemini 2.5 Flash Think',
-        shortLabel: 'G2.5 Think',
-        protectedKey: 'gemini-flash',
-        Icon: Gemini.Color,
+    'o3': {
+        label: 'O3',
+        shortLabel: 'O3',
+        protectedKey: 'o3',
+        Icon: OpenAI,
+    },
+    'o3-mini': {
+        label: 'O3 Mini',
+        shortLabel: 'O3 Mini',
+        protectedKey: 'o3-mini',
+        Icon: OpenAI,
+    },
+    'o4-mini': {
+        label: 'O4 Mini',
+        shortLabel: 'O4 Mini',
+        protectedKey: 'o4-mini',
+        Icon: OpenAI,
     },
 
     // Claude 系列
+    'claude-3.5-sonnet': {
+        label: 'Claude 3.5 Sonnet',
+        shortLabel: 'Claude 3.5',
+        protectedKey: 'claude',
+        Icon: Claude.Color,
+    },
+    'claude-sonnet-4': {
+        label: 'Claude Sonnet 4',
+        shortLabel: 'Claude 4',
+        protectedKey: 'claude',
+        Icon: Claude.Color,
+    },
     'claude-sonnet-4-5': {
-        label: 'Claude 4.5',
+        label: 'Claude Sonnet 4.5',
         shortLabel: 'Claude 4.5',
         protectedKey: 'claude',
         Icon: Claude.Color,
     },
-    'claude-sonnet-4-5-thinking': {
-        label: 'Claude 4.5 TK',
-        shortLabel: 'Claude 4.5 TK',
-        protectedKey: 'claude',
-        Icon: Claude.Color,
+
+    // Gemini 系列
+    'gemini-2.0-flash': {
+        label: 'Gemini 2.0 Flash',
+        shortLabel: 'G2.0 Flash',
+        protectedKey: 'gemini-flash',
+        Icon: Gemini.Color,
     },
-    'claude-opus-4-6-thinking': {
-        label: 'Claude 4.6 TK',
-        shortLabel: 'Claude 4.6 TK',
-        protectedKey: 'claude',
-        Icon: Claude.Color,
+    'gemini-2.5-pro': {
+        label: 'Gemini 2.5 Pro',
+        shortLabel: 'G2.5 Pro',
+        protectedKey: 'gemini-pro',
+        Icon: Gemini.Color,
     },
 };
 
@@ -105,26 +138,20 @@ export const getModelConfig = (modelId: string): ModelConfig | undefined => {
 const MODEL_SORT_WEIGHTS = {
     // 系列权重 (第一优先级)
     series: {
-        'gemini-3': 100,
-        'gemini-2.5': 200,
-        'gemini-2': 300,
-        'claude': 400,
+        'gpt': 100,
+        'o': 200,
+        'claude': 300,
+        'gemini': 400,
     },
     // 性能级别权重 (第二优先级)
     tier: {
-        'pro': 10,
-        'flash': 20,
-        'lite': 30,
-        'opus': 5,
+        'nano': 30,
+        'mini': 20,
+        'standard': 10,
+        'pro': 5,
         'sonnet': 10,
+        'flash': 20,
     },
-    // 特殊后缀权重 (第三优先级)
-    suffix: {
-        'thinking': 1,
-        'image': 2,
-        'high': 0,
-        'low': 3,
-    }
 };
 
 /**
@@ -135,38 +162,29 @@ function getModelSortWeight(modelId: string): number {
     let weight = 0;
 
     // 1. 系列权重 (x1000)
-    if (id.startsWith('gemini-3')) {
-        weight += MODEL_SORT_WEIGHTS.series['gemini-3'] * 1000;
-    } else if (id.startsWith('gemini-2.5')) {
-        weight += MODEL_SORT_WEIGHTS.series['gemini-2.5'] * 1000;
-    } else if (id.startsWith('gemini-2')) {
-        weight += MODEL_SORT_WEIGHTS.series['gemini-2'] * 1000;
+    if (id.startsWith('gpt')) {
+        weight += MODEL_SORT_WEIGHTS.series['gpt'] * 1000;
+    } else if (id.startsWith('o') && /^o\d/.test(id)) {
+        weight += MODEL_SORT_WEIGHTS.series['o'] * 1000;
     } else if (id.startsWith('claude')) {
         weight += MODEL_SORT_WEIGHTS.series['claude'] * 1000;
+    } else if (id.startsWith('gemini')) {
+        weight += MODEL_SORT_WEIGHTS.series['gemini'] * 1000;
     }
 
     // 2. 性能级别权重 (x100)
-    if (id.includes('pro')) {
+    if (id.includes('nano')) {
+        weight += MODEL_SORT_WEIGHTS.tier['nano'] * 100;
+    } else if (id.includes('mini')) {
+        weight += MODEL_SORT_WEIGHTS.tier['mini'] * 100;
+    } else if (id.includes('pro')) {
         weight += MODEL_SORT_WEIGHTS.tier['pro'] * 100;
-    } else if (id.includes('flash')) {
-        weight += MODEL_SORT_WEIGHTS.tier['flash'] * 100;
-    } else if (id.includes('lite')) {
-        weight += MODEL_SORT_WEIGHTS.tier['lite'] * 100;
-    } else if (id.includes('opus')) {
-        weight += MODEL_SORT_WEIGHTS.tier['opus'] * 100;
     } else if (id.includes('sonnet')) {
         weight += MODEL_SORT_WEIGHTS.tier['sonnet'] * 100;
-    }
-
-    // 3. 特殊后缀权重 (x10)
-    if (id.includes('thinking')) {
-        weight += MODEL_SORT_WEIGHTS.suffix['thinking'] * 10;
-    } else if (id.includes('image')) {
-        weight += MODEL_SORT_WEIGHTS.suffix['image'] * 10;
-    } else if (id.includes('high')) {
-        weight += MODEL_SORT_WEIGHTS.suffix['high'] * 10;
-    } else if (id.includes('low')) {
-        weight += MODEL_SORT_WEIGHTS.suffix['low'] * 10;
+    } else if (id.includes('flash')) {
+        weight += MODEL_SORT_WEIGHTS.tier['flash'] * 100;
+    } else {
+        weight += MODEL_SORT_WEIGHTS.tier['standard'] * 100;
     }
 
     return weight;
@@ -191,4 +209,3 @@ export function sortModels<T extends { id: string }>(models: T[]): T[] {
         return a.id.localeCompare(b.id);
     });
 }
-

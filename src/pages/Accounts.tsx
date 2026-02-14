@@ -1,12 +1,9 @@
-
-
 import {
   Download,
   LayoutGrid,
   List,
   RefreshCw,
   Search,
-  Sparkles,
   ToggleLeft,
   ToggleRight,
   Trash2,
@@ -17,7 +14,6 @@ import AccountDetailsDialog from "../components/accounts/AccountDetailsDialog";
 import AccountGrid from "../components/accounts/AccountGrid";
 import AccountTable from "../components/accounts/AccountTable";
 import AddAccountDialog from "../components/accounts/AddAccountDialog";
-import DeviceFingerprintDialog from "../components/accounts/DeviceFingerprintDialog";
 import ModalDialog from "../components/common/ModalDialog";
 import Pagination from "../components/common/Pagination";
 import { showToast } from "../components/common/ToastContainer";
@@ -48,8 +44,6 @@ function Accounts() {
     refreshQuota,
     toggleProxyStatus,
     reorderAccounts,
-    warmUpAccounts,
-    warmUpAccount,
     updateAccountLabel,
   } = useAccountStore();
   const { config, showAllQuotas, toggleShowAllQuotas } = useConfigStore();
@@ -68,7 +62,6 @@ function Accounts() {
     localStorage.setItem('accounts_view_mode', viewMode);
   }, [viewMode]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [deviceAccount, setDeviceAccount] = useState<Account | null>(null);
   const [detailsAccount, setDetailsAccount] = useState<Account | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [isBatchDelete, setIsBatchDelete] = useState(false);
@@ -76,29 +69,7 @@ function Accounts() {
     accountId: string;
     enable: boolean;
   } | null>(null);
-  const [isWarmupConfirmOpen, setIsWarmupConfirmOpen] = useState(false);
-  const [isWarmuping, setIsWarmuping] = useState(false);
   const [refreshingIds, setRefreshingIds] = useState<Set<string>>(new Set());
-
-  const handleWarmup = async (accountId: string) => {
-    setRefreshingIds((prev) => {
-      const next = new Set(prev);
-      next.add(accountId);
-      return next;
-    });
-    try {
-      const msg = await warmUpAccount(accountId);
-      showToast(msg, "success");
-    } catch (error) {
-      showToast(`${t("common.error")}: ${error}`, "error");
-    } finally {
-      setRefreshingIds((prev) => {
-        const next = new Set(prev);
-        next.delete(accountId);
-        return next;
-      });
-    }
-  };
 
   const handleUpdateLabel = async (accountId: string, label: string) => {
     try {
@@ -106,44 +77,6 @@ function Accounts() {
       showToast(t('accounts.label_updated', 'Label updated'), 'success');
     } catch (error) {
       showToast(`${t('common.error')}: ${error}`, 'error');
-    }
-  };
-
-  const handleWarmupAll = async () => {
-    setIsWarmupConfirmOpen(false);
-    setIsWarmuping(true);
-    try {
-      const isBatch = selectedIds.size > 0;
-      if (isBatch) {
-        const ids = Array.from(selectedIds);
-        setRefreshingIds(new Set(ids));
-        const results = await Promise.allSettled(
-          ids.map((id) => warmUpAccount(id)),
-        );
-        let successCount = 0;
-        results.forEach((r) => {
-          if (r.status === "fulfilled") successCount++;
-        });
-        showToast(
-          t("accounts.warmup_batch_triggered", { count: successCount }),
-          "success",
-        );
-      } else {
-        const msg = await warmUpAccounts();
-        if (msg) {
-          showToast(msg, "success");
-        } else {
-          showToast(
-            t("accounts.warmup_all_triggered", "全量预热任务已触发"),
-            "success",
-          );
-        }
-      }
-    } catch (error) {
-      showToast(`${t("common.error")}: ${error}`, "error");
-    } finally {
-      setIsWarmuping(false);
-      setRefreshingIds(new Set());
     }
   };
 
@@ -243,13 +176,13 @@ function Accounts() {
     return {
       all: searchedAccounts.length,
       pro: searchedAccounts.filter((a) =>
-        a.quota?.subscription_tier?.toLowerCase().includes("pro"),
+        a.quota?.plan?.toLowerCase().includes("pro"),
       ).length,
       ultra: searchedAccounts.filter((a) =>
-        a.quota?.subscription_tier?.toLowerCase().includes("ultra"),
+        a.quota?.plan?.toLowerCase().includes("ultra"),
       ).length,
       free: searchedAccounts.filter((a) => {
-        const tier = a.quota?.subscription_tier?.toLowerCase();
+        const tier = a.quota?.plan?.toLowerCase();
         return tier && !tier.includes("pro") && !tier.includes("ultra");
       }).length,
     };
@@ -261,15 +194,15 @@ function Accounts() {
 
     if (filter === "pro") {
       result = result.filter((a) =>
-        a.quota?.subscription_tier?.toLowerCase().includes("pro"),
+        a.quota?.plan?.toLowerCase().includes("pro"),
       );
     } else if (filter === "ultra") {
       result = result.filter((a) =>
-        a.quota?.subscription_tier?.toLowerCase().includes("ultra"),
+        a.quota?.plan?.toLowerCase().includes("ultra"),
       );
     } else if (filter === "free") {
       result = result.filter((a) => {
-        const tier = a.quota?.subscription_tier?.toLowerCase();
+        const tier = a.quota?.plan?.toLowerCase();
         return tier && !tier.includes("pro") && !tier.includes("ultra");
       });
     }
@@ -317,8 +250,8 @@ function Accounts() {
     setSelectedIds(newSet);
   };
 
-  const handleAddAccount = async (email: string, refreshToken: string) => {
-    await addAccount(email, refreshToken);
+  const handleAddAccount = async (email: string, githubToken: string) => {
+    await addAccount(email, githubToken);
   };
 
   const [switchingAccountId, setSwitchingAccountId] = useState<string | null>(
@@ -512,8 +445,6 @@ function Accounts() {
           `${t("common.success")}: ${successCount}, ${t("common.error")}: ${failedCount}`,
           "warning",
         );
-        // You might want to show details in a different way, but for toast, keep it simple or use a "view details" action if supported.
-        // For now, simpler toast is better than a huge alert.
         if (details.length > 0) {
           console.warn("Refresh failures:", details);
         }
@@ -533,7 +464,7 @@ function Accounts() {
         return;
       }
 
-      // 1. Get export data from API (contains refresh_token)
+      // 1. Get export data from API (contains github_token)
       const accountIds = accountsToExport.map((acc) => acc.id);
       const response = await exportAccounts(accountIds);
 
@@ -544,7 +475,7 @@ function Accounts() {
 
       const exportData = response.accounts;
       const content = JSON.stringify(exportData, null, 2);
-      const fileName = `antigravity_accounts_${new Date().toISOString().split("T")[0]}.json`;
+      const fileName = `copilot_accounts_${new Date().toISOString().split("T")[0]}.json`;
 
       // 2. Determine Path & Export
       if (isTauri()) {
@@ -613,7 +544,7 @@ function Accounts() {
   };
 
   const processImportData = async (content: string) => {
-    let importData: Array<{ email?: string; refresh_token?: string }>;
+    let importData: Array<{ email?: string; github_token?: string }>;
     try {
       importData = JSON.parse(content);
     } catch {
@@ -628,9 +559,9 @@ function Accounts() {
 
     const validEntries = importData.filter(
       (item) =>
-        item.refresh_token &&
-        typeof item.refresh_token === "string" &&
-        item.refresh_token.startsWith("1//"),
+        item.github_token &&
+        typeof item.github_token === "string" &&
+        item.github_token.length > 0,
     );
 
     if (validEntries.length === 0) {
@@ -643,7 +574,7 @@ function Accounts() {
 
     for (const entry of validEntries) {
       try {
-        await addAccount(entry.email || "", entry.refresh_token!);
+        await addAccount(entry.email || "", entry.github_token!);
         successCount++;
       } catch (error) {
         console.error("Import account failed:", error);
@@ -726,16 +657,14 @@ function Accounts() {
       setDetailsAccount(account);
     }
   };
-  const handleViewDevice = (accountId: string) => {
-    const account = accounts.find((a) => a.id === accountId);
-    if (account) {
-      setDeviceAccount(account);
-    }
+
+  // Placeholder for device view - no-op after migration
+  const handleViewDevice = (_accountId: string) => {
+    // Device fingerprint removed during Copilot migration
   };
 
   return (
     <div className="h-full flex flex-col p-5 gap-4 max-w-7xl mx-auto w-full">
-      {/* 测试按钮 - 在最顶部 */}
       <input
         ref={fileInputRef}
         type="file"
@@ -981,28 +910,6 @@ function Accounts() {
             </span>
           </button>
 
-          <button
-            className={`px-2.5 py-2 bg-orange-500 text-white text-xs font-medium rounded-lg hover:bg-orange-600 transition-colors flex items-center gap-1.5 shadow-sm ${isWarmuping ? "opacity-70 cursor-not-allowed" : ""}`}
-            onClick={() => setIsWarmupConfirmOpen(true)}
-            disabled={isWarmuping}
-            title={
-              selectedIds.size > 0
-                ? t("accounts.warmup_selected", { count: selectedIds.size })
-                : t("accounts.warmup_all", "一键预热所有账号")
-            }
-          >
-            <Sparkles
-              className={`w-3.5 h-3.5 ${isWarmuping ? "animate-pulse" : ""}`}
-            />
-            <span className="hidden xl:inline">
-              {isWarmuping
-                ? t("common.loading")
-                : selectedIds.size > 0
-                  ? t("accounts.warmup_selected", { count: selectedIds.size })
-                  : t("accounts.warmup_all", "一键预热")}
-            </span>
-          </button>
-
           <label className="flex items-center gap-2 cursor-pointer select-none px-2 py-2 border border-transparent hover:bg-gray-100 dark:hover:bg-base-200 rounded-lg transition-colors" title={t('accounts.show_all_quotas')}>
             <span className="text-xs font-medium text-gray-600 dark:text-gray-300 hidden xl:inline">
               {t('accounts.show_all_quotas')}
@@ -1072,7 +979,6 @@ function Accounts() {
                   )
                 }
                 onReorder={reorderAccounts}
-                onWarmup={handleWarmup}
                 onUpdateLabel={handleUpdateLabel}
               />
             </div>
@@ -1098,7 +1004,6 @@ function Accounts() {
                   !!accounts.find((a) => a.id === id)?.proxy_disabled,
                 )
               }
-              onWarmup={handleWarmup}
               onUpdateLabel={handleUpdateLabel}
             />
           </div>
@@ -1126,10 +1031,6 @@ function Accounts() {
       <AccountDetailsDialog
         account={detailsAccount}
         onClose={() => setDetailsAccount(null)}
-      />
-      <DeviceFingerprintDialog
-        account={deviceAccount}
-        onClose={() => setDeviceAccount(null)}
       />
 
       <ModalDialog
@@ -1192,32 +1093,6 @@ function Accounts() {
           }
         />
       )}
-
-      <ModalDialog
-        isOpen={isWarmupConfirmOpen}
-        title={
-          selectedIds.size > 0
-            ? t("accounts.dialog.batch_warmup_title", "批量手动预热")
-            : t("accounts.dialog.warmup_all_title", "全量手动预热")
-        }
-        message={
-          selectedIds.size > 0
-            ? t(
-              "accounts.dialog.batch_warmup_msg",
-              "确定要为选中的 {{count}} 个账号立即触发预热吗？",
-              { count: selectedIds.size },
-            )
-            : t(
-              "accounts.dialog.warmup_all_msg",
-              "确定要立即为所有符合条件的账号触发预热任务吗？这将向 Google 服务发送极小流量。",
-            )
-        }
-        type="confirm"
-        confirmText={t("accounts.warmup_now", "立即预热")}
-        isDestructive={false}
-        onConfirm={handleWarmupAll}
-        onCancel={() => setIsWarmupConfirmOpen(false)}
-      />
     </div>
   );
 }

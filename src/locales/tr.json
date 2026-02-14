@@ -146,46 +146,7 @@
         "reset_time": "Sıfırlama Zamanı",
         "switch_to": "Bu hesaba geç",
         "actions": "İşlemler",
-        "device_fingerprint": "Cihaz Parmak İzi",
         "show_all_quotas": "Tüm kotaları göster",
-        "device_fingerprint_dialog": {
-            "title": "Cihaz Parmak İzi",
-            "operations": "Cihaz Parmak İzi İşlemleri",
-            "generate_and_bind": "Oluştur ve Bağla",
-            "restore_original": "Orijinali Geri Yükle",
-            "open_storage_directory": "Depolama Dizini Aç",
-            "current_storage": "Mevcut Depolama",
-            "effective": "Etkin",
-            "current_storage_desc": "storage.json'den oku (hesap değiştirirken bağlama uygulandıktan sonra güncellenir)",
-            "account_binding": "Hesap Bağlama",
-            "pending_application": "Uygulama Bekliyor",
-            "account_binding_desc": "Oluşturma/geri yükleme sonrasında bağlama olarak kaydedilir, hesap değiştirirken storage.json'e yazılır",
-            "historical_fingerprints": "Geçmiş Parmak İzleri (isteğe bağlı geri yükle/sil)",
-            "no_history": "Geçmiş Yok",
-            "current": "Mevcut",
-            "restore": "Geri Yükle",
-            "delete_version": "Bu sürümü sil",
-            "confirm_generate_title": "Oluşturup bağlamak istediğinize emin misiniz?",
-            "confirm_generate_desc": "Yeni bir cihaz parmak izi seti oluşturacak ve mevcut parmak izi olarak ayarlayacak. Devam etmek istediğinize emin misiniz?",
-            "confirm_restore_title": "Orijinal parmak izini geri yüklemek istediğinize emin misiniz?",
-            "confirm_restore_desc": "Orijinal parmak izini geri yükleyecek ve mevcut parmak izini üzerine yazacak. Devam etmek istediğinize emin misiniz?",
-            "cancel": "İptal",
-            "confirm": "Onayla",
-            "processing": "İşleniyor...",
-            "loading": "Yükleniyor...",
-            "failed_to_load_device_info": "Cihaz bilgileri yüklenemedi",
-            "generation_failed": "Oluşturma başarısız",
-            "binding_failed": "Bağlama başarısız",
-            "restoration_failed": "Geri yükleme başarısız",
-            "deletion_failed": "Silme başarısız",
-            "directory_open_failed": "Dizin açılamıyor",
-            "generated_and_bound": "Oluşturuldu ve bağlandı",
-            "restored": "Geri yüklendi",
-            "deleted": "Silindi",
-            "directory_opened": "Depolama dizini açıldı",
-            "original_fingerprint_not_found": "Orijinal parmak izi bulunamadı",
-            "storage_json_not_found": "storage.json bulunamadı, lütfen Antigravity'nin yapılandırma dosyasını oluşturmak için çalıştırıldığından emin olun"
-        },
         "quota_protected": "Korumalı",
         "details": {
             "title": "Kota Detayları",
@@ -199,9 +160,9 @@
         "add": {
             "title": "Hesap Ekle",
             "tabs": {
-                "oauth": "OAuth",
-                "token": "Refresh Token",
-                "import": "DB İçe Aktar"
+                "oauth": "Device Flow",
+                "token": "GitHub Token",
+                "import": "Import"
             },
             "oauth": {
                 "recommend": "Önerilen",
@@ -247,6 +208,17 @@
             "oauth_error": "OAuth başarısız: {{error}}",
             "status": {
                 "error_token": "Lütfen Refresh Token girin"
+            },
+            "device_flow": {
+                "title": "GitHub Device Flow Login",
+                "start": "Start GitHub Login",
+                "code_label": "Enter this code on GitHub:",
+                "open_github": "Open GitHub",
+                "waiting": "Waiting for authorization...",
+                "expires_in": "Expires in {{time}}",
+                "success": "Authorization successful!",
+                "expired": "Code expired. Please try again.",
+                "cancelled": "Login cancelled."
             }
         },
         "table": {

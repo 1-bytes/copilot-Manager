@@ -1,4 +1,4 @@
-import { X, Clock, AlertCircle } from 'lucide-react';
+import { X, Clock, AlertCircle, Github } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { Account } from '../../types/account';
 import { formatDate } from '../../utils/format';
@@ -14,6 +14,10 @@ export default function AccountDetailsDialog({ account, onClose }: AccountDetail
     const { t } = useTranslation();
     if (!account) return null;
 
+    const githubLogin = (account as any).github_login;
+    const copilotPlan = (account as any).copilot_plan;
+    const githubToken = (account as any).github_token;
+
     return createPortal(
         <div className="modal modal-open z-[100]">
             {/* Draggable Top Region */}
@@ -27,11 +31,11 @@ export default function AccountDetailsDialog({ account, onClose }: AccountDetail
                         <div className="px-2.5 py-0.5 rounded-full bg-gray-100 dark:bg-base-200 border border-gray-200 dark:border-base-300 text-xs font-mono text-gray-500 dark:text-gray-400">
                             {account.email}
                         </div>
-                        {account.quota?.subscription_tier && (
-                            <div className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${account.quota.subscription_tier === 'ultra' ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400' :
-                                account.quota.subscription_tier === 'pro' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' : 'bg-gray-100 text-gray-600 dark:bg-base-300 dark:text-gray-400'
+                        {account.quota?.plan && (
+                            <div className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${account.quota.plan === 'ultra' ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400' :
+                                account.quota.plan === 'pro' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' : 'bg-gray-100 text-gray-600 dark:bg-base-300 dark:text-gray-400'
                                 }`}>
-                                {account.quota.subscription_tier}
+                                {account.quota.plan}
                             </div>
                         )}
                     </div>
@@ -65,6 +69,43 @@ export default function AccountDetailsDialog({ account, onClose }: AccountDetail
 
                 {/* Content */}
                 <div className="p-6 max-h-[60vh] overflow-y-auto">
+                    {/* GitHub & Copilot Info Section */}
+                    {(githubLogin || copilotPlan || githubToken) && (
+                        <div className="mb-6">
+                            <h4 className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                                <Github size={12} />
+                                GitHub / Copilot
+                            </h4>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                {githubLogin && (
+                                    <div className="p-3 rounded-xl border border-gray-100 dark:border-base-200 bg-white dark:bg-base-100">
+                                        <div className="text-[10px] text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">GitHub Login</div>
+                                        <div className="text-sm font-mono text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
+                                            <Github size={14} className="text-gray-500" />
+                                            @{githubLogin}
+                                        </div>
+                                    </div>
+                                )}
+                                {copilotPlan && (
+                                    <div className="p-3 rounded-xl border border-gray-100 dark:border-base-200 bg-white dark:bg-base-100">
+                                        <div className="text-[10px] text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">Copilot Plan</div>
+                                        <div className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">
+                                            {copilotPlan}
+                                        </div>
+                                    </div>
+                                )}
+                                {githubToken && (
+                                    <div className="p-3 rounded-xl border border-gray-100 dark:border-base-200 bg-white dark:bg-base-100">
+                                        <div className="text-[10px] text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">GitHub Token</div>
+                                        <div className="text-sm font-mono text-green-600 dark:text-green-400 truncate" title={githubToken}>
+                                            {typeof githubToken === 'string' ? `${githubToken.substring(0, 8)}...` : 'Active'}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
                     {/* Protected Models Section */}
                     {account.protected_models && account.protected_models.length > 0 && (
                         <div className="mb-6">

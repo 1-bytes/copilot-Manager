@@ -1,238 +1,346 @@
 use serde::{Deserialize, Serialize};
+use crate::modules::logger;
 
-// Google OAuth configuration
-const CLIENT_ID: &str = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
-const CLIENT_SECRET: &str = "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";
-const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
-const USERINFO_URL: &str = "https://www.googleapis.com/oauth2/v2/userinfo";
+// GitHub OAuth Device Flow configuration
+// Uses the same Client ID as VS Code Copilot
+const GITHUB_CLIENT_ID: &str = "Iv1.b507a08c87ecfe98";
 
-const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
+/// Get the GitHub OAuth client ID
+pub fn client_id() -> &'static str {
+    GITHUB_CLIENT_ID
+}
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct TokenResponse {
-    pub access_token: String,
+// ============================================================================
+// Response types
+// ============================================================================
+
+/// Device code response from GitHub
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct DeviceCodeResponse {
+    pub device_code: String,
+    pub user_code: String,
+    pub verification_uri: String,
     pub expires_in: i64,
-    #[serde(default)]
+    pub interval: i64,
+}
+
+/// Token response from GitHub device flow polling
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct DeviceTokenResponse {
+    pub access_token: String,
     pub token_type: String,
-    #[serde(default)]
-    pub refresh_token: Option<String>,
+    pub scope: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct UserInfo {
-    pub email: String,
+/// GitHub user info
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct GitHubUser {
+    pub login: String,
+    pub id: u64,
     pub name: Option<String>,
-    pub given_name: Option<String>,
-    pub family_name: Option<String>,
-    pub picture: Option<String>,
+    pub email: Option<String>,
 }
 
-impl UserInfo {
-    /// Get best display name
-    pub fn get_display_name(&self) -> Option<String> {
-        // Prefer name
-        if let Some(name) = &self.name {
-            if !name.trim().is_empty() {
-                return Some(name.clone());
-            }
-        }
-        
-        // If name is empty, combine given_name and family_name
-        match (&self.given_name, &self.family_name) {
-            (Some(given), Some(family)) => Some(format!("{} {}", given, family)),
-            (Some(given), None) => Some(given.clone()),
-            (None, Some(family)) => Some(family.clone()),
-            (None, None) => None,
-        }
-    }
+/// GitHub email entry (from /user/emails)
+#[derive(Debug, Deserialize, Serialize)]
+pub struct GitHubEmail {
+    pub email: String,
+    pub primary: bool,
+    pub verified: bool,
 }
 
-
-/// Generate OAuth authorization URL
-pub fn get_auth_url(redirect_uri: &str, state: &str) -> String {
-    let scopes = vec![
-        "https://www.googleapis.com/auth/cloud-platform",
-        "https://www.googleapis.com/auth/userinfo.email",
-        "https://www.googleapis.com/auth/userinfo.profile",
-        "https://www.googleapis.com/auth/cclog",
-        "https://www.googleapis.com/auth/experimentsandconfigs"
-    ].join(" ");
-
-    let params = vec![
-        ("client_id", CLIENT_ID),
-        ("redirect_uri", redirect_uri),
-        ("response_type", "code"),
-        ("scope", &scopes),
-        ("access_type", "offline"),
-        ("prompt", "consent"),
-        ("include_granted_scopes", "true"),
-        ("state", state),
-    ];
-    
-    let url = url::Url::parse_with_params(AUTH_URL, &params).expect("Invalid Auth URL");
-    url.to_string()
+/// Copilot token response
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct CopilotTokenResponse {
+    pub token: Option<String>,
+    pub expires_at: i64,
+    #[serde(default)]
+    pub sku: Option<String>,
+    #[serde(default)]
+    pub chat_enabled: Option<bool>,
 }
 
-/// Exchange authorization code for token
-pub async fn exchange_code(code: &str, redirect_uri: &str) -> Result<TokenResponse, String> {
-    // [PHASE 2] 对于登录行为，尚未有 account_id，使用全局池阶梯逻辑
-    let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
-        pool.get_effective_client(None, 60).await
-    } else {
-        crate::utils::http::get_long_client()
-    };
-    
-    let params = [
-        ("client_id", CLIENT_ID),
-        ("client_secret", CLIENT_SECRET),
-        ("code", code),
-        ("redirect_uri", redirect_uri),
-        ("grant_type", "authorization_code"),
-    ];
+/// Copilot user info
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct CopilotUser {
+    #[serde(default)]
+    pub copilot_plan: Option<String>,
+}
 
-    let response = client
-        .post(TOKEN_URL)
-        .form(&params)
+/// Poll result enum
+pub enum PollResult {
+    Success(DeviceTokenResponse),
+    Pending,
+    SlowDown,
+    Expired,
+    Denied,
+    Error(String),
+}
+
+// ============================================================================
+// OAuth Device Flow
+// ============================================================================
+
+/// Step 1: Request a device code from GitHub
+pub async fn request_device_code(client_id_override: Option<&str>) -> Result<DeviceCodeResponse, String> {
+    let cid = client_id_override.unwrap_or(GITHUB_CLIENT_ID);
+
+    let client = crate::utils::http::get_client();
+    let resp = client
+        .post("https://github.com/login/device/code")
+        .header("Accept", "application/json")
+        .form(&[("client_id", cid), ("scope", "read:user user:email")])
         .send()
         .await
-        .map_err(|e| {
-            if e.is_connect() || e.is_timeout() {
-                format!("Token exchange request failed: {}. 请检查你的网络代理设置，确保可以稳定连接 Google 服务。", e)
-            } else {
-                format!("Token exchange request failed: {}", e)
-            }
-        })?;
+        .map_err(|e| format!("request_device_code failed: {}", e))?;
 
-    if response.status().is_success() {
-        let token_res = response.json::<TokenResponse>()
-            .await
-            .map_err(|e| format!("Token parsing failed: {}", e))?;
-        
-        // Add detailed logs
-        crate::modules::logger::log_info(&format!(
-            "Token exchange successful! access_token: {}..., refresh_token: {}",
-            &token_res.access_token.chars().take(20).collect::<String>(),
-            if token_res.refresh_token.is_some() { "✓" } else { "✗ Missing" }
-        ));
-        
-        // Log warning if refresh_token is missing
-        if token_res.refresh_token.is_none() {
-            crate::modules::logger::log_warn(
-                "Warning: Google did not return a refresh_token. Potential reasons:\n\
-                 1. User has previously authorized this application\n\
-                 2. Need to revoke access in Google Cloud Console and retry\n\
-                 3. OAuth parameter configuration issue"
-            );
-        }
-        
-        Ok(token_res)
-    } else {
-        let error_text = response.text().await.unwrap_or_default();
-        Err(format!("Token exchange failed: {}", error_text))
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("request_device_code HTTP {}: {}", status, body));
     }
+
+    resp.json::<DeviceCodeResponse>()
+        .await
+        .map_err(|e| format!("parse_device_code_response: {}", e))
 }
 
-/// Refresh access_token using refresh_token
-pub async fn refresh_access_token(refresh_token: &str, account_id: Option<&str>) -> Result<TokenResponse, String> {
-    // [PHASE 2] 根据 account_id 使用对应的代理
-    let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
-        pool.get_effective_client(account_id, 60).await
-    } else {
-        crate::utils::http::get_long_client()
-    };
-    
-    let params = [
-        ("client_id", CLIENT_ID),
-        ("client_secret", CLIENT_SECRET),
-        ("refresh_token", refresh_token),
-        ("grant_type", "refresh_token"),
-    ];
+/// Step 2: Poll for token (single attempt)
+pub async fn poll_for_token(
+    device_code: &str,
+    client_id_override: Option<&str>,
+) -> Result<PollResult, String> {
+    let cid = client_id_override.unwrap_or(GITHUB_CLIENT_ID);
 
-    // [FIX #1583] 提供更详细的日志，帮助诊断 Docker 环境下的代理问题
-    if let Some(id) = account_id {
-        crate::modules::logger::log_info(&format!("Refreshing Token for account: {}...", id));
-    } else {
-        crate::modules::logger::log_info("Refreshing Token for generic request (no account_id)...");
-    }
-    
-    let response = client
-        .post(TOKEN_URL)
-        .form(&params)
+    let client = crate::utils::http::get_client();
+    let resp = client
+        .post("https://github.com/login/oauth/access_token")
+        .header("Accept", "application/json")
+        .form(&[
+            ("client_id", cid),
+            ("device_code", device_code),
+            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+        ])
         .send()
         .await
-        .map_err(|e| {
-            if e.is_connect() || e.is_timeout() {
-                format!("Refresh request failed: {}. 无法连接 Google 授权服务器，请检查代理设置。", e)
-            } else {
-                format!("Refresh request failed: {}", e)
-            }
-        })?;
+        .map_err(|e| format!("poll_for_token failed: {}", e))?;
 
-    if response.status().is_success() {
-        let token_data = response
-            .json::<TokenResponse>()
-            .await
-            .map_err(|e| format!("Refresh data parsing failed: {}", e))?;
-        
-        crate::modules::logger::log_info(&format!("Token refreshed successfully! Expires in: {} seconds", token_data.expires_in));
-        Ok(token_data)
-    } else {
-        let error_text = response.text().await.unwrap_or_default();
-        Err(format!("Refresh failed: {}", error_text))
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("poll_for_token HTTP {}: {}", status, body));
     }
+
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("parse_poll_response: {}", e))?;
+
+    // Check for error response (pending, slow_down, etc.)
+    if let Some(error) = body.get("error").and_then(|v| v.as_str()) {
+        return Ok(match error {
+            "authorization_pending" => PollResult::Pending,
+            "slow_down" => PollResult::SlowDown,
+            "expired_token" => PollResult::Expired,
+            "access_denied" => PollResult::Denied,
+            _ => PollResult::Error(format!("Unknown error: {}", error)),
+        });
+    }
+
+    // Success - parse token response
+    let token_resp: DeviceTokenResponse = serde_json::from_value(body)
+        .map_err(|e| format!("parse_token_response: {}", e))?;
+    Ok(PollResult::Success(token_resp))
 }
 
-/// Get user info
-pub async fn get_user_info(access_token: &str, account_id: Option<&str>) -> Result<UserInfo, String> {
+// ============================================================================
+// GitHub API
+// ============================================================================
+
+/// Get GitHub user info using an access token
+pub async fn get_github_user(
+    github_token: &str,
+    account_id: Option<&str>,
+) -> Result<GitHubUser, String> {
+    let _id = account_id.unwrap_or("unknown");
     let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
         pool.get_effective_client(account_id, 15).await
     } else {
         crate::utils::http::get_client()
     };
-    
-    let response = client
-        .get(USERINFO_URL)
-        .bearer_auth(access_token)
+
+    let resp = client
+        .get("https://api.github.com/user")
+        .header("Authorization", format!("Bearer {}", github_token))
+        .header("User-Agent", "copilot-manager")
+        .header("Accept", "application/vnd.github+json")
         .send()
         .await
-        .map_err(|e| format!("User info request failed: {}", e))?;
+        .map_err(|e| format!("get_github_user failed: {}", e))?;
 
-    if response.status().is_success() {
-        response.json::<UserInfo>()
-            .await
-            .map_err(|e| format!("User info parsing failed: {}", e))
-    } else {
-        let error_text = response.text().await.unwrap_or_default();
-        Err(format!("Failed to get user info: {}", error_text))
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("get_github_user HTTP {}: {}", status, body));
     }
+
+    resp.json::<GitHubUser>()
+        .await
+        .map_err(|e| format!("parse_github_user: {}", e))
 }
 
-/// Check and refresh Token if needed
-/// Returns the latest access_token
-pub async fn ensure_fresh_token(
-    current_token: &crate::models::TokenData,
+/// Get GitHub user primary email
+pub async fn get_github_primary_email(
+    github_token: &str,
     account_id: Option<&str>,
-) -> Result<crate::models::TokenData, String> {
-    let now = chrono::Local::now().timestamp();
-    
-    // If no expiry or more than 5 minutes valid, return direct
-    if current_token.expiry_timestamp > now + 300 {
-        return Ok(current_token.clone());
+) -> Result<String, String> {
+    let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
+        pool.get_effective_client(account_id, 15).await
+    } else {
+        crate::utils::http::get_client()
+    };
+
+    let resp = client
+        .get("https://api.github.com/user/emails")
+        .header("Authorization", format!("Bearer {}", github_token))
+        .header("User-Agent", "copilot-manager")
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|e| format!("get_github_primary_email failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("get_github_primary_email HTTP {}: {}", status, body));
     }
-    
-    // Need to refresh
-    crate::modules::logger::log_info(&format!("Token expiring soon for account {:?}, refreshing...", account_id));
-    let response = refresh_access_token(&current_token.refresh_token, account_id).await?;
-    
-    // Construct new TokenData
-    Ok(crate::models::TokenData::new(
-        response.access_token,
-        current_token.refresh_token.clone(), // refresh_token may not be returned on refresh
-        response.expires_in,
-        current_token.email.clone(),
-        current_token.project_id.clone(), // Keep original project_id
-        None,  // session_id will be generated in token_manager
-    ))
+
+    let emails: Vec<GitHubEmail> = resp
+        .json()
+        .await
+        .map_err(|e| format!("parse_github_emails: {}", e))?;
+
+    emails
+        .iter()
+        .find(|e| e.primary && e.verified)
+        .or_else(|| emails.iter().find(|e| e.primary))
+        .or_else(|| emails.first())
+        .map(|e| e.email.clone())
+        .ok_or_else(|| "no_email_found".to_string())
+}
+
+// ============================================================================
+// Copilot API
+// ============================================================================
+
+/// Get Copilot token (short-lived, ~30 min)
+pub async fn get_copilot_token(
+    github_token: &str,
+    account_id: Option<&str>,
+) -> Result<CopilotTokenResponse, String> {
+    let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
+        pool.get_effective_client(account_id, 15).await
+    } else {
+        crate::utils::http::get_client()
+    };
+
+    let resp = client
+        .get("https://api.github.com/copilot_internal/v2/token")
+        .header("Authorization", format!("token {}", github_token))
+        .header("User-Agent", "copilot-manager")
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| format!("get_copilot_token failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("get_copilot_token HTTP {}: {}", status, body));
+    }
+
+    resp.json::<CopilotTokenResponse>()
+        .await
+        .map_err(|e| format!("parse_copilot_token: {}", e))
+}
+
+/// Get Copilot user plan info
+pub async fn get_copilot_user(
+    github_token: &str,
+    account_id: Option<&str>,
+) -> Result<CopilotUser, String> {
+    let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
+        pool.get_effective_client(account_id, 15).await
+    } else {
+        crate::utils::http::get_client()
+    };
+
+    let resp = client
+        .get("https://api.github.com/user")
+        .header("Authorization", format!("Bearer {}", github_token))
+        .header("User-Agent", "copilot-manager")
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|e| format!("get_copilot_user failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("get_copilot_user HTTP {}: {}", status, body));
+    }
+
+    // Try to parse copilot-related fields from the user response
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("parse_copilot_user: {}", e))?;
+
+    let copilot_plan = body
+        .get("plan")
+        .and_then(|p| p.get("name"))
+        .and_then(|n| n.as_str())
+        .map(|s| s.to_string());
+
+    Ok(CopilotUser { copilot_plan })
+}
+
+/// Ensure fresh copilot token - refresh if expired
+pub async fn ensure_fresh_copilot_token(
+    account: &mut crate::models::Account,
+) -> Result<String, String> {
+    if !account.token.is_copilot_token_expired() {
+        return Ok(account.token.copilot_token.clone().unwrap());
+    }
+
+    logger::log_info(&format!(
+        "[OAuth] Refreshing Copilot token for {}",
+        account.email
+    ));
+
+    let copilot_resp = get_copilot_token(&account.token.github_token, Some(&account.id)).await?;
+
+    account.token.copilot_token = copilot_resp.token.clone();
+    account.token.copilot_token_expires_at = copilot_resp.expires_at;
+    account.token.sku = copilot_resp.sku.clone();
+    account.token.chat_enabled = copilot_resp.chat_enabled;
+    account.token.account_type = Some(infer_account_type(copilot_resp.sku.as_deref()));
+
+    // Save updated token
+    let _ = crate::modules::account::save_account(account);
+
+    copilot_resp
+        .token
+        .ok_or_else(|| "copilot_token_is_none".to_string())
+}
+
+/// Infer account type from SKU
+pub fn infer_account_type(sku: Option<&str>) -> String {
+    match sku {
+        Some(s) if s.contains("business") => "business".to_string(),
+        Some(s) if s.contains("enterprise") => "enterprise".to_string(),
+        _ => "individual".to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -240,13 +348,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_get_auth_url_contains_state() {
-        let redirect_uri = "http://localhost:8080/callback";
-        let state = "test-state-123456";
-        let url = get_auth_url(redirect_uri, state);
-        
-        assert!(url.contains("state=test-state-123456"));
-        assert!(url.contains("redirect_uri=http%3A%2F%2Flocalhost%3A8080%2Fcallback"));
-        assert!(url.contains("response_type=code"));
+    fn test_infer_account_type() {
+        assert_eq!(infer_account_type(None), "individual");
+        assert_eq!(infer_account_type(Some("copilot_for_business_seat")), "business");
+        assert_eq!(infer_account_type(Some("copilot_enterprise")), "enterprise");
+        assert_eq!(infer_account_type(Some("copilot_individual")), "individual");
     }
 }

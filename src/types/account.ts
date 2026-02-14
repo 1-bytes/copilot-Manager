@@ -2,9 +2,10 @@ export interface Account {
     id: string;
     email: string;
     name?: string;
+    github_login?: string;
+    copilot_plan?: string;
+    auth_method?: string;  // "device_flow" | "oauth_app" | "personal_access_token"
     token: TokenData;
-    device_profile?: DeviceProfile;
-    device_history?: DeviceProfileVersion[];
     quota?: QuotaData;
     disabled?: boolean;
     disabled_reason?: string;
@@ -19,19 +20,22 @@ export interface Account {
 }
 
 export interface TokenData {
-    access_token: string;
-    refresh_token: string;
-    expires_in: number;
-    expiry_timestamp: number;
-    token_type: string;
-    email?: string;
+    github_token: string;
+    copilot_token?: string;
+    copilot_token_expires_at: number;
+    sku?: string;
+    chat_enabled?: boolean;
+    account_type?: string;  // "individual" | "business" | "enterprise"
 }
 
 export interface QuotaData {
+    plan: string;
+    chat_enabled: boolean;
     models: ModelQuota[];
     last_updated: number;
-    is_forbidden?: boolean;
-    subscription_tier?: string;  // 订阅类型: FREE/PRO/ULTRA
+    is_forbidden: boolean;
+    quota_reset_date?: string;
+    quota_snapshots?: QuotaSnapshot[];
 }
 
 export interface ModelQuota {
@@ -40,18 +44,13 @@ export interface ModelQuota {
     reset_time: string;
 }
 
-export interface DeviceProfile {
-    machine_id: string;
-    mac_machine_id: string;
-    dev_device_id: string;
-    sqm_id: string;
+export interface QuotaSnapshot {
+    timestamp: number;
+    models: ModelQuota[];
 }
 
-export interface DeviceProfileVersion {
-    id: string;
-    created_at: number;
-    label: string;
-    profile: DeviceProfile;
-    is_current?: boolean;
+export interface AccountExportItem {
+    email: string;
+    github_token: string;
+    github_login?: string;
 }
-

@@ -1,489 +1,214 @@
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
-use tokio::sync::mpsc;
-use tokio::sync::watch;
 use std::sync::{Mutex, OnceLock};
-use tauri::Url;
+use serde::Serialize;
 use crate::modules::oauth;
+use crate::modules::logger;
 
-struct OAuthFlowState {
-    auth_url: String,
-    #[allow(dead_code)]
-    redirect_uri: String,
-    state: String,
-    cancel_tx: watch::Sender<bool>,
-    code_tx: mpsc::Sender<Result<String, String>>,
-    code_rx: Option<mpsc::Receiver<Result<String, String>>>,
+// ============================================================================
+// Device Flow State
+// ============================================================================
+
+struct DeviceFlowState {
+    device_code: String,
+    user_code: String,
+    verification_uri: String,
+    expires_at: i64,
+    interval: i64,
+    cancelled: bool,
 }
 
-static OAUTH_FLOW_STATE: OnceLock<Mutex<Option<OAuthFlowState>>> = OnceLock::new();
+static DEVICE_FLOW_STATE: OnceLock<Mutex<Option<DeviceFlowState>>> = OnceLock::new();
 
-fn get_oauth_flow_state() -> &'static Mutex<Option<OAuthFlowState>> {
-    OAUTH_FLOW_STATE.get_or_init(|| Mutex::new(None))
+fn get_device_flow_state() -> &'static Mutex<Option<DeviceFlowState>> {
+    DEVICE_FLOW_STATE.get_or_init(|| Mutex::new(None))
 }
 
-fn oauth_success_html() -> &'static str {
-    "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n\
-    <html>\
-    <body style='font-family: sans-serif; text-align: center; padding: 50px;'>\
-    <h1 style='color: green;'>✅ Authorization Successful!</h1>\
-    <p>You can close this window and return to the application.</p>\
-    <script>setTimeout(function() { window.close(); }, 2000);</script>\
-    </body>\
-    </html>"
+/// Info returned to the frontend so the user can authorize
+#[derive(Debug, Clone, Serialize)]
+pub struct DeviceFlowInfo {
+    pub user_code: String,
+    pub verification_uri: String,
+    pub expires_in: i64,
 }
 
-fn oauth_fail_html() -> &'static str {
-    "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html; charset=utf-8\r\n\r\n\
-    <html>\
-    <body style='font-family: sans-serif; text-align: center; padding: 50px;'>\
-    <h1 style='color: red;'>❌ Authorization Failed</h1>\
-    <p>Failed to obtain Authorization Code. Please return to the app and try again.</p>\
-    </body>\
-    </html>"
-}
+// ============================================================================
+// Public API
+// ============================================================================
 
-async fn ensure_oauth_flow_prepared(app_handle: Option<tauri::AppHandle>) -> Result<String, String> {
+/// Start a GitHub device flow: request a device code, store it, and return info for the user.
+/// Optionally opens the verification URL in the default browser.
+pub async fn start_device_flow(
+    app_handle: Option<tauri::AppHandle>,
+    client_id_override: Option<&str>,
+) -> Result<DeviceFlowInfo, String> {
+    // Cancel any previous flow
+    let _ = cancel_device_flow();
 
-    // Return URL if flow already exists and is still "fresh" (receiver hasn't been taken)
-    if let Ok(mut state) = get_oauth_flow_state().lock() {
-        if let Some(s) = state.as_mut() {
-            if s.code_rx.is_some() {
-                return Ok(s.auth_url.clone());
-            } else {
-                // Flow is already "in progress" (rx taken), but user requested a NEW one.
-                // Force cancel the old one to allow a new attempt.
-                let _ = s.cancel_tx.send(true);
-                *state = None;
-            }
-        }
-    }
+    let resp = oauth::request_device_code(client_id_override).await?;
 
-    // Create loopback listeners.
-    // Some browsers resolve `localhost` to IPv6 (::1). To avoid "localhost refused connection",
-    // we try to listen on BOTH IPv6 and IPv4 with the same port when possible.
-    let mut ipv4_listener: Option<TcpListener> = None;
-    let mut ipv6_listener: Option<TcpListener> = None;
+    let now = chrono::Utc::now().timestamp();
+    let expires_at = now + resp.expires_in;
 
-    // Prefer creating one listener on an ephemeral port first, then bind the other stack to same port.
-    // If both are available -> use `http://localhost:<port>` as redirect URI.
-    // If only one is available -> use an explicit IP to force correct stack.
-    let port: u16;
-    match TcpListener::bind("[::1]:0").await {
-        Ok(l6) => {
-            port = l6
-                .local_addr()
-                .map_err(|e| format!("failed_to_get_local_port: {}", e))?
-                .port();
-            ipv6_listener = Some(l6);
-
-            match TcpListener::bind(format!("127.0.0.1:{}", port)).await {
-                Ok(l4) => ipv4_listener = Some(l4),
-                Err(e) => {
-                    crate::modules::logger::log_warn(&format!(
-                        "failed_to_bind_ipv4_callback_port_127_0_0_1:{} (will only listen on IPv6): {}",
-                        port, e
-                    ));
-                }
-            }
-        }
-        Err(_) => {
-            let l4 = TcpListener::bind("127.0.0.1:0")
-                .await
-                .map_err(|e| format!("failed_to_bind_local_port: {}", e))?;
-            port = l4
-                .local_addr()
-                .map_err(|e| format!("failed_to_get_local_port: {}", e))?
-                .port();
-            ipv4_listener = Some(l4);
-
-            match TcpListener::bind(format!("[::1]:{}", port)).await {
-                Ok(l6) => ipv6_listener = Some(l6),
-                Err(e) => {
-                    crate::modules::logger::log_warn(&format!(
-                        "failed_to_bind_ipv6_callback_port_::1:{} (will only listen on IPv4): {}",
-                        port, e
-                    ));
-                }
-            }
-        }
-    }
-
-    let has_ipv4 = ipv4_listener.is_some();
-    let has_ipv6 = ipv6_listener.is_some();
-
-    let redirect_uri = if has_ipv4 && has_ipv6 {
-        format!("http://localhost:{}/oauth-callback", port)
-    } else if has_ipv4 {
-        format!("http://127.0.0.1:{}/oauth-callback", port)
-    } else {
-        format!("http://[::1]:{}/oauth-callback", port)
+    let info = DeviceFlowInfo {
+        user_code: resp.user_code.clone(),
+        verification_uri: resp.verification_uri.clone(),
+        expires_in: resp.expires_in,
     };
-
-    let state_str = uuid::Uuid::new_v4().to_string();
-    let auth_url = oauth::get_auth_url(&redirect_uri, &state_str);
-
-    // Cancellation signal (supports multiple consumers)
-    let (cancel_tx, cancel_rx) = watch::channel(false);
-    // Use mpsc instead of oneshot to allow multiple senders (listener OR manual input)
-    let (code_tx, code_rx) = mpsc::channel::<Result<String, String>>(1);
-
-    // Start listeners immediately: even if the user authorizes before clicking "Start OAuth",
-    // the browser can still hit our callback and finish the flow.
-    let app_handle_for_tasks = app_handle.clone();
-
-    if let Some(l4) = ipv4_listener {
-        let tx = code_tx.clone();
-        let mut rx = cancel_rx.clone();
-        let app_handle = app_handle_for_tasks.clone();
-        tokio::spawn(async move {
-            if let Ok((mut stream, _)) = tokio::select! {
-                res = l4.accept() => res.map_err(|e| format!("failed_to_accept_connection: {}", e)),
-                _ = rx.changed() => Err("OAuth cancelled".to_string()),
-            } {
-                // Reuse the existing parsing/response code by constructing a temporary listener task
-                // that sends into the shared mpsc channel.
-                let mut buffer = [0u8; 4096];
-                let bytes_read = stream.read(&mut buffer).await.unwrap_or(0);
-                let request = String::from_utf8_lossy(&buffer[..bytes_read]);
-                
-                // [FIX #931/850/778] More robust parsing and detailed logging
-                let query_params = request
-                    .lines()
-                    .next()
-                    .and_then(|line| {
-                        let parts: Vec<&str> = line.split_whitespace().collect();
-                        if parts.len() >= 2 { Some(parts[1]) } else { None }
-                    })
-                    .and_then(|path| {
-                        // Use a dummy base for parsing; redirect_uri is already set to localhost
-                        Url::parse(&format!("http://localhost{}", path)).ok()
-                    })
-                    .map(|url| {
-                        let mut code = None;
-                        let mut state = None;
-                        for (k, v) in url.query_pairs() {
-                            if k == "code" { code = Some(v.to_string()); }
-                            else if k == "state" { state = Some(v.to_string()); }
-                        }
-                        (code, state)
-                    });
-
-                let (code, received_state) = match query_params {
-                    Some((c, s)) => (c, s),
-                    None => (None, None),
-                };
-
-                if code.is_none() && bytes_read > 0 {
-                    crate::modules::logger::log_error(&format!(
-                        "OAuth callback failed to parse code. Raw request (first 512 bytes): {}",
-                        &request.chars().take(512).collect::<String>()
-                    ));
-                }
-
-                // Verify state
-                let state_valid = {
-                    if let Ok(lock) = get_oauth_flow_state().lock() {
-                        if let Some(s) = lock.as_ref() {
-                            received_state.as_ref() == Some(&s.state)
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    }
-                };
-
-                let (result, response_html) = match (code, state_valid) {
-                    (Some(code), true) => {
-                        crate::modules::logger::log_info("Successfully captured OAuth code from IPv4 listener");
-                        (Ok(code), oauth_success_html())
-                    },
-                    (Some(_), false) => {
-                        crate::modules::logger::log_error("OAuth callback state mismatch (CSRF protection)");
-                        (Err("OAuth state mismatch".to_string()), oauth_fail_html())
-                    },
-                    (None, _) => (Err("Failed to get Authorization Code in callback".to_string()), oauth_fail_html()),
-                };
-                
-                let _ = stream.write_all(response_html.as_bytes()).await;
-                let _ = stream.flush().await;
-
-                if let Some(h) = app_handle {
-                    use tauri::Emitter;
-                    let _ = h.emit("oauth-callback-received", ());
-                }
-                let _ = tx.send(result).await;
-            }
-        });
-    }
-
-    if let Some(l6) = ipv6_listener {
-        let tx = code_tx.clone();
-        let mut rx = cancel_rx;
-        let app_handle = app_handle_for_tasks;
-        tokio::spawn(async move {
-            if let Ok((mut stream, _)) = tokio::select! {
-                res = l6.accept() => res.map_err(|e| format!("failed_to_accept_connection: {}", e)),
-                _ = rx.changed() => Err("OAuth cancelled".to_string()),
-            } {
-                let mut buffer = [0u8; 4096];
-                let bytes_read = stream.read(&mut buffer).await.unwrap_or(0);
-                let request = String::from_utf8_lossy(&buffer[..bytes_read]);
-                
-                let query_params = request
-                    .lines()
-                    .next()
-                    .and_then(|line| {
-                        let parts: Vec<&str> = line.split_whitespace().collect();
-                        if parts.len() >= 2 { Some(parts[1]) } else { None }
-                    })
-                    .and_then(|path| {
-                        Url::parse(&format!("http://localhost{}", path)).ok()
-                    })
-                    .map(|url| {
-                        let mut code = None;
-                        let mut state = None;
-                        for (k, v) in url.query_pairs() {
-                            if k == "code" { code = Some(v.to_string()); }
-                            else if k == "state" { state = Some(v.to_string()); }
-                        }
-                        (code, state)
-                    });
-
-                let (code, received_state) = match query_params {
-                    Some((c, s)) => (c, s),
-                    None => (None, None),
-                };
-
-                if code.is_none() && bytes_read > 0 {
-                    crate::modules::logger::log_error(&format!(
-                        "OAuth callback failed to parse code (IPv6). Raw request: {}",
-                        &request.chars().take(512).collect::<String>()
-                    ));
-                }
-
-                // Verify state
-                let state_valid = {
-                    if let Ok(lock) = get_oauth_flow_state().lock() {
-                        if let Some(s) = lock.as_ref() {
-                            received_state.as_ref() == Some(&s.state)
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    }
-                };
-
-                let (result, response_html) = match (code, state_valid) {
-                    (Some(code), true) => {
-                        crate::modules::logger::log_info("Successfully captured OAuth code from IPv6 listener");
-                        (Ok(code), oauth_success_html())
-                    },
-                    (Some(_), false) => {
-                        crate::modules::logger::log_error("OAuth callback state mismatch (IPv6 CSRF protection)");
-                        (Err("OAuth state mismatch".to_string()), oauth_fail_html())
-                    },
-                    (None, _) => (Err("Failed to get Authorization Code in callback".to_string()), oauth_fail_html()),
-                };
-                
-                let _ = stream.write_all(response_html.as_bytes()).await;
-                let _ = stream.flush().await;
-
-                if let Some(h) = app_handle {
-                    use tauri::Emitter;
-                    let _ = h.emit("oauth-callback-received", ());
-                }
-                let _ = tx.send(result).await;
-            }
-        });
-    }
 
     // Save state
-    if let Ok(mut state) = get_oauth_flow_state().lock() {
-        *state = Some(OAuthFlowState {
-            auth_url: auth_url.clone(),
-            redirect_uri,
-            state: state_str,
-            cancel_tx,
-            code_tx,
-            code_rx: Some(code_rx),
+    if let Ok(mut lock) = get_device_flow_state().lock() {
+        *lock = Some(DeviceFlowState {
+            device_code: resp.device_code,
+            user_code: resp.user_code,
+            verification_uri: resp.verification_uri.clone(),
+            expires_at,
+            interval: resp.interval,
+            cancelled: false,
         });
     }
 
-    // Send event to frontend (for display/copying link)
-    if let Some(h) = app_handle {
-        use tauri::Emitter;
-        let _ = h.emit("oauth-url-generated", &auth_url);
-    }
+    logger::log_info(&format!(
+        "[DeviceFlow] Started. User code: {}, URI: {}",
+        info.user_code, info.verification_uri
+    ));
 
-    Ok(auth_url)
-}
-
-/// Pre-generate OAuth URL (does not open browser, does not block waiting for callback)
-pub async fn prepare_oauth_url(app_handle: Option<tauri::AppHandle>) -> Result<String, String> {
-    ensure_oauth_flow_prepared(app_handle).await
-}
-
-/// Cancel current OAuth flow
-pub fn cancel_oauth_flow() {
-    if let Ok(mut state) = get_oauth_flow_state().lock() {
-        if let Some(s) = state.take() {
-            let _ = s.cancel_tx.send(true);
-            crate::modules::logger::log_info("Sent OAuth cancellation signal");
-        }
-    }
-}
-
-/// Start OAuth flow and wait for callback, then exchange token
-pub async fn start_oauth_flow(app_handle: Option<tauri::AppHandle>) -> Result<oauth::TokenResponse, String> {
-    // Ensure URL + listener are ready (this way if the user authorizes first, it won't get stuck)
-    let auth_url = ensure_oauth_flow_prepared(app_handle.clone()).await?;
-
-    if let Some(h) = app_handle {
-        // Open default browser
+    // Optionally open browser
+    if let Some(handle) = app_handle {
         use tauri_plugin_opener::OpenerExt;
-        h.opener()
-            .open_url(&auth_url, None::<String>)
-            .map_err(|e| format!("failed_to_open_browser: {}", e))?;
+        let _ = handle
+            .opener()
+            .open_url(&resp.verification_uri, None::<String>);
     }
 
-    // Take code_rx to wait for it
-    let (mut code_rx, redirect_uri) = {
-        let mut lock = get_oauth_flow_state()
-            .lock()
-            .map_err(|_| "OAuth state lock corrupted".to_string())?;
-        let Some(state) = lock.as_mut() else {
-            return Err("OAuth state does not exist".to_string());
-        };
-        let rx = state
-            .code_rx
-            .take()
-            .ok_or_else(|| "OAuth authorization already in progress".to_string())?;
-        (rx, state.redirect_uri.clone())
-    };
-
-    // Wait for code (if user has already authorized, this returns immediately)
-    // For mpsc, we use recv()
-    let code = match code_rx.recv().await {
-        Some(Ok(code)) => code,
-        Some(Err(e)) => return Err(e),
-        None => return Err("OAuth flow channel closed unexpectedly".to_string()),
-    };
-
-    // Clean up flow state (release cancel_tx, etc.)
-    if let Ok(mut lock) = get_oauth_flow_state().lock() {
-        *lock = None;
-    }
-
-    oauth::exchange_code(&code, &redirect_uri).await
+    Ok(info)
 }
 
-/// Завершить OAuth flow без открытия браузера.
-/// Предполагается, что пользователь открыл ссылку вручную (или ранее была открыта),
-/// а мы только ждём callback и обмениваем code на token.
-pub async fn complete_oauth_flow(app_handle: Option<tauri::AppHandle>) -> Result<oauth::TokenResponse, String> {
-    // Ensure URL + listeners exist
-    let _ = ensure_oauth_flow_prepared(app_handle).await?;
-
-    // Take receiver to wait for code
-    let (mut code_rx, redirect_uri) = {
-        let mut lock = get_oauth_flow_state()
+/// Poll GitHub until the user authorizes (or the flow expires/is cancelled).
+/// Returns the GitHub access token on success.
+pub async fn complete_device_flow(
+    _app_handle: Option<tauri::AppHandle>,
+) -> Result<oauth::DeviceTokenResponse, String> {
+    // Extract state
+    let (device_code, expires_at, mut interval) = {
+        let lock = get_device_flow_state()
             .lock()
-            .map_err(|_| "OAuth state lock corrupted".to_string())?;
-        let Some(state) = lock.as_mut() else {
-            return Err("OAuth state does not exist".to_string());
-        };
-        let rx = state
-            .code_rx
-            .take()
-            .ok_or_else(|| "OAuth authorization already in progress".to_string())?;
-        (rx, state.redirect_uri.clone())
+            .map_err(|_| "device_flow_state_lock_poisoned".to_string())?;
+        let state = lock.as_ref().ok_or("no_active_device_flow")?;
+        if state.cancelled {
+            return Err("device_flow_cancelled".to_string());
+        }
+        (
+            state.device_code.clone(),
+            state.expires_at,
+            state.interval,
+        )
     };
 
-    let code = match code_rx.recv().await {
-        Some(Ok(code)) => code,
-        Some(Err(e)) => return Err(e),
-        None => return Err("OAuth flow channel closed unexpectedly".to_string()),
-    };
-
-    if let Ok(mut lock) = get_oauth_flow_state().lock() {
-        *lock = None;
+    // Ensure minimum 5s interval
+    if interval < 5 {
+        interval = 5;
     }
 
-    oauth::exchange_code(&code, &redirect_uri).await
-}
+    loop {
+        // Check expiry
+        let now = chrono::Utc::now().timestamp();
+        if now >= expires_at {
+            cleanup_flow();
+            return Err("device_flow_expired".to_string());
+        }
 
-/// Manually submit an OAuth code to complete the flow.
-/// This is used when the user manually copies the code/URL from the browser
-/// because the localhost callback couldn't be reached (e.g. in Docker/remote).
-pub async fn submit_oauth_code(code_input: String, state_input: Option<String>) -> Result<(), String> {
-    let tx = {
-        let lock = get_oauth_flow_state().lock().map_err(|e| e.to_string())?;
-        if let Some(state) = lock.as_ref() {
-            // Verify state if provided
-            if let Some(provided_state) = state_input {
-                if provided_state != state.state {
-                    return Err("OAuth state mismatch (CSRF protection)".to_string());
+        // Check cancelled
+        {
+            let lock = get_device_flow_state().lock().map_err(|_| "lock_poisoned".to_string())?;
+            if let Some(state) = lock.as_ref() {
+                if state.cancelled {
+                    drop(lock);
+                    cleanup_flow();
+                    return Err("device_flow_cancelled".to_string());
                 }
+            } else {
+                return Err("device_flow_state_cleared".to_string());
             }
-            state.code_tx.clone()
-        } else {
-            return Err("No active OAuth flow found".to_string());
         }
-    };
 
-    // Extract code if it's a URL
-    let code = if code_input.starts_with("http") {
-        if let Ok(url) = Url::parse(&code_input) {
-            url.query_pairs()
-                .find(|(k, _)| k == "code")
-                .map(|(_, v)| v.to_string())
-                .unwrap_or(code_input)
-        } else {
-            code_input
+        // Wait before polling
+        tokio::time::sleep(tokio::time::Duration::from_secs(interval as u64)).await;
+
+        // Poll
+        match oauth::poll_for_token(&device_code, None).await? {
+            oauth::PollResult::Success(token_resp) => {
+                logger::log_info("[DeviceFlow] Authorization successful!");
+                cleanup_flow();
+                return Ok(token_resp);
+            }
+            oauth::PollResult::Pending => {
+                // Still waiting, continue
+            }
+            oauth::PollResult::SlowDown => {
+                // Increase interval by 5 seconds
+                interval += 5;
+                logger::log_info(&format!(
+                    "[DeviceFlow] Slow down requested, interval now {}s",
+                    interval
+                ));
+            }
+            oauth::PollResult::Expired => {
+                cleanup_flow();
+                return Err("device_flow_expired".to_string());
+            }
+            oauth::PollResult::Denied => {
+                cleanup_flow();
+                return Err("device_flow_access_denied".to_string());
+            }
+            oauth::PollResult::Error(e) => {
+                cleanup_flow();
+                return Err(format!("device_flow_poll_error: {}", e));
+            }
         }
-    } else {
-        code_input
-    };
+    }
+}
 
-    crate::modules::logger::log_info("Received manual OAuth code submission");
-    
-    // Send to the channel
-    tx.send(Ok(code)).await.map_err(|_| "Failed to send code to OAuth flow (receiver dropped)".to_string())?;
-    
+/// Cancel the current device flow
+pub fn cancel_device_flow() -> Result<(), String> {
+    if let Ok(mut lock) = get_device_flow_state().lock() {
+        if let Some(state) = lock.as_mut() {
+            state.cancelled = true;
+            logger::log_info("[DeviceFlow] Cancelled");
+        }
+        *lock = None;
+    }
     Ok(())
 }
-/// Manually prepare an OAuth flow without starting listeners.
-/// Useful for Web/Docker environments where we only need manual code submission.
-pub fn prepare_oauth_flow_manually(redirect_uri: String, state_str: String) -> Result<(String, mpsc::Receiver<Result<String, String>>), String> {
-    let auth_url = oauth::get_auth_url(&redirect_uri, &state_str);
-    
-    // Check if we can reuse existing state
-    if let Ok(mut lock) = get_oauth_flow_state().lock() {
-        if let Some(s) = lock.as_mut() {
-             // If we already have a code_rx, we can't easily "steal" it again because it's already returned.
-             // But if this is a NEW request (different state), we should overwrite.
-             // For now, let's just clear and restart to be safe.
-             let _ = s.cancel_tx.send(true);
-             *lock = None;
+
+/// Check if a device flow is currently active
+pub fn is_device_flow_active() -> bool {
+    if let Ok(lock) = get_device_flow_state().lock() {
+        if let Some(state) = lock.as_ref() {
+            let now = chrono::Utc::now().timestamp();
+            return !state.cancelled && now < state.expires_at;
         }
     }
+    false
+}
 
-    let (cancel_tx, _cancel_rx) = watch::channel(false);
-    let (code_tx, code_rx) = mpsc::channel(1);
-
-    if let Ok(mut state) = get_oauth_flow_state().lock() {
-        *state = Some(OAuthFlowState {
-            auth_url: auth_url.clone(),
-            redirect_uri: redirect_uri.clone(),
-            state: state_str,
-            cancel_tx,
-            code_tx,
-            code_rx: None, // We return it directly
-        });
+/// Get current device flow info (if active)
+pub fn get_current_device_flow_info() -> Option<DeviceFlowInfo> {
+    if let Ok(lock) = get_device_flow_state().lock() {
+        if let Some(state) = lock.as_ref() {
+            let now = chrono::Utc::now().timestamp();
+            if !state.cancelled && now < state.expires_at {
+                return Some(DeviceFlowInfo {
+                    user_code: state.user_code.clone(),
+                    verification_uri: state.verification_uri.clone(),
+                    expires_in: state.expires_at - now,
+                });
+            }
+        }
     }
+    None
+}
 
-    Ok((auth_url, code_rx))
+fn cleanup_flow() {
+    if let Ok(mut lock) = get_device_flow_state().lock() {
+        *lock = None;
+    }
 }

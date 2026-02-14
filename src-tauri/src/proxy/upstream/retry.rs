@@ -1,5 +1,5 @@
-// 429 重试策略
-// Duration 解析
+// 429 retry strategy
+// Parses retry delay from Copilot / standard HTTP error responses
 
 use regex::Regex;
 use once_cell::sync::Lazy;
@@ -8,7 +8,7 @@ static DURATION_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"([\d.]+)\s*(ms|s|m|h)").unwrap()
 });
 
-/// 解析 Duration 字符串 (e.g., "1.5s", "200ms", "1h16m0.667s")
+/// Parse a duration string (e.g., "1.5s", "200ms", "1h16m0.667s")
 pub fn parse_duration_ms(duration_str: &str) -> Option<u64> {
     let mut total_ms: f64 = 0.0;
     let mut matched = false;
@@ -34,32 +34,88 @@ pub fn parse_duration_ms(duration_str: &str) -> Option<u64> {
     Some(total_ms.round() as u64)
 }
 
-/// 从 429 错误中提取 retry delay
+/// Extract retry delay (in milliseconds) from an error response body.
+///
+/// Supports multiple error formats:
+///
+/// 1. **Copilot / OpenAI format**: `{ "error": { "message": "...", "type": "..." } }`
+///    with optional `retry_after` or `retry-after` field in the error object.
+///
+/// 2. **Standard Retry-After as integer seconds**: When the body contains a
+///    top-level `retry_after` field with a numeric value (seconds).
+///
+/// 3. **Generic `details` array with RetryInfo**: Any error body containing
+///    `error.details[].retryDelay` (covers various API providers).
+///
+/// 4. **Plain numeric body**: If the body is just a number, treat as seconds.
 pub fn parse_retry_delay(error_text: &str) -> Option<u64> {
     use serde_json::Value;
 
-    let json: Value = serde_json::from_str(error_text).ok()?;
-    let details = json.get("error")?.get("details")?.as_array()?;
+    // Try parsing as JSON first
+    if let Ok(json) = serde_json::from_str::<Value>(error_text) {
+        // ── Strategy 1: Top-level retry_after (numeric seconds) ────────
+        if let Some(retry_after) = json.get("retry_after")
+            .or_else(|| json.get("retry-after"))
+            .or_else(|| json.get("Retry-After"))
+        {
+            if let Some(secs) = retry_after.as_f64() {
+                return Some((secs * 1000.0).round() as u64);
+            }
+            if let Some(s) = retry_after.as_str() {
+                // Could be a duration string like "1.5s" or a plain number
+                if let Ok(secs) = s.parse::<f64>() {
+                    return Some((secs * 1000.0).round() as u64);
+                }
+                return parse_duration_ms(s);
+            }
+        }
 
-    // 方式1: RetryInfo.retryDelay
-    for detail in details {
-        if let Some(type_str) = detail.get("@type").and_then(|v| v.as_str()) {
-            if type_str.contains("RetryInfo") {
-                if let Some(retry_delay) = detail.get("retryDelay").and_then(|v| v.as_str()) {
-                    return parse_duration_ms(retry_delay);
+        // ── Strategy 2: error.retry_after ──────────────────────────────
+        if let Some(error_obj) = json.get("error") {
+            if let Some(retry_after) = error_obj.get("retry_after")
+                .or_else(|| error_obj.get("retry-after"))
+                .or_else(|| error_obj.get("Retry-After"))
+            {
+                if let Some(secs) = retry_after.as_f64() {
+                    return Some((secs * 1000.0).round() as u64);
+                }
+                if let Some(s) = retry_after.as_str() {
+                    if let Ok(secs) = s.parse::<f64>() {
+                        return Some((secs * 1000.0).round() as u64);
+                    }
+                    return parse_duration_ms(s);
+                }
+            }
+
+            // ── Strategy 3: error.details[] with RetryInfo ─────────────
+            if let Some(details) = error_obj.get("details").and_then(|v| v.as_array()) {
+                for detail in details {
+                    // RetryInfo.retryDelay
+                    if let Some(type_str) = detail.get("@type").and_then(|v| v.as_str()) {
+                        if type_str.contains("RetryInfo") {
+                            if let Some(retry_delay) = detail.get("retryDelay").and_then(|v| v.as_str()) {
+                                return parse_duration_ms(retry_delay);
+                            }
+                        }
+                    }
+
+                    // metadata.quotaResetDelay
+                    if let Some(quota_delay) = detail
+                        .get("metadata")
+                        .and_then(|m| m.get("quotaResetDelay"))
+                        .and_then(|v| v.as_str())
+                    {
+                        return parse_duration_ms(quota_delay);
+                    }
                 }
             }
         }
     }
 
-    // 方式2: metadata.quotaResetDelay
-    for detail in details {
-        if let Some(quota_delay) = detail
-            .get("metadata")
-            .and_then(|m| m.get("quotaResetDelay"))
-            .and_then(|v| v.as_str())
-        {
-            return parse_duration_ms(quota_delay);
+    // ── Strategy 4: Plain numeric body (seconds) ───────────────────────
+    if let Ok(secs) = error_text.trim().parse::<f64>() {
+        if secs > 0.0 && secs < 3600.0 {
+            return Some((secs * 1000.0).round() as u64);
         }
     }
 
@@ -79,7 +135,26 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_retry_delay() {
+    fn test_parse_retry_delay_copilot_format() {
+        // Copilot-style: top-level retry_after in seconds
+        let body = r#"{"error": {"message": "Rate limit exceeded", "type": "rate_limit_error"}, "retry_after": 5}"#;
+        assert_eq!(parse_retry_delay(body), Some(5000));
+
+        // retry_after inside error object
+        let body = r#"{"error": {"message": "Rate limit exceeded", "retry_after": 2.5}}"#;
+        assert_eq!(parse_retry_delay(body), Some(2500));
+    }
+
+    #[test]
+    fn test_parse_retry_delay_standard_header_in_body() {
+        // Some APIs echo the Retry-After header value in the JSON body
+        let body = r#"{"Retry-After": "10"}"#;
+        assert_eq!(parse_retry_delay(body), Some(10000));
+    }
+
+    #[test]
+    fn test_parse_retry_delay_details_array() {
+        // Legacy format with details array (backward compat)
         let error_json = r#"{
             "error": {
                 "details": [{
@@ -88,7 +163,18 @@ mod tests {
                 }]
             }
         }"#;
-
         assert_eq!(parse_retry_delay(error_json), Some(1204));
+    }
+
+    #[test]
+    fn test_parse_retry_delay_plain_number() {
+        assert_eq!(parse_retry_delay("30"), Some(30000));
+        assert_eq!(parse_retry_delay("1.5"), Some(1500));
+    }
+
+    #[test]
+    fn test_parse_retry_delay_no_match() {
+        assert_eq!(parse_retry_delay("just some error text"), None);
+        assert_eq!(parse_retry_delay(r#"{"error": {"message": "bad request"}}"#), None);
     }
 }

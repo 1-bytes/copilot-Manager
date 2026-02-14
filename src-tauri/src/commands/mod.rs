@@ -22,18 +22,18 @@ pub async fn list_accounts() -> Result<Vec<Account>, String> {
     modules::list_accounts()
 }
 
-/// 添加账号
+/// 添加账号 (via GitHub token)
 #[tauri::command]
 pub async fn add_account(
     app: tauri::AppHandle,
     _email: String,
-    refresh_token: String,
+    github_token: String,
 ) -> Result<Account, String> {
     let service = modules::account_service::AccountService::new(
         crate::modules::integration::SystemManager::Desktop(app.clone()),
     );
 
-    let mut account = service.add_account(&refresh_token).await?;
+    let mut account = service.add_account(&github_token).await?;
 
     // 自动刷新配额
     let _ = internal_refresh_account_quota(&app, &mut account).await;
@@ -47,7 +47,6 @@ pub async fn add_account(
     Ok(account)
 }
 
-/// 删除账号
 /// 删除账号
 #[tauri::command]
 pub async fn delete_account(
@@ -92,7 +91,6 @@ pub async fn delete_accounts(
 }
 
 /// 重新排序账号列表
-/// 根据传入的账号ID数组顺序更新账号排列
 #[tauri::command]
 pub async fn reorder_accounts(
     proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
@@ -128,7 +126,7 @@ pub async fn switch_account(
     // 同步托盘
     crate::modules::tray::update_tray_menus(&app);
 
-    // [FIX #820] Notify proxy to clear stale session bindings and reload accounts
+    // Notify proxy to clear stale session bindings and reload accounts
     let _ = crate::commands::proxy::reload_proxy_accounts(proxy_state).await;
 
     Ok(())
@@ -137,14 +135,11 @@ pub async fn switch_account(
 /// 获取当前账号
 #[tauri::command]
 pub async fn get_current_account() -> Result<Option<Account>, String> {
-    // println!("🚀 Backend Command: get_current_account called"); // Commented out to reduce noise for frequent calls, relies on frontend log for frequency
-    // Actually user WANTS to see it.
     modules::logger::log_info("Backend Command: get_current_account called");
 
     let account_id = modules::get_current_account_id()?;
 
     if let Some(id) = account_id {
-        // modules::logger::log_info(&format!("   Found current account ID: {}", id));
         modules::load_account(&id).map(Some)
     } else {
         modules::logger::log_info("   No current account set");
@@ -152,7 +147,7 @@ pub async fn get_current_account() -> Result<Option<Account>, String> {
     }
 }
 
-/// 导出账号（包含 refresh_token）
+/// 导出账号（包含 github_token）
 use crate::models::AccountExportResponse;
 
 #[tauri::command]
@@ -244,87 +239,6 @@ pub async fn refresh_all_quotas(
 ) -> Result<RefreshStats, String> {
     refresh_all_quotas_internal(&proxy_state, Some(app_handle)).await
 }
-/// 获取设备指纹（当前 storage.json + 账号绑定）
-#[tauri::command]
-pub async fn get_device_profiles(
-    account_id: String,
-) -> Result<modules::account::DeviceProfiles, String> {
-    modules::get_device_profiles(&account_id)
-}
-
-/// 绑定设备指纹（capture: 采集当前；generate: 生成新指纹），并写入 storage.json
-#[tauri::command]
-pub async fn bind_device_profile(
-    account_id: String,
-    mode: String,
-) -> Result<crate::models::DeviceProfile, String> {
-    modules::bind_device_profile(&account_id, &mode)
-}
-
-/// 预览生成一个指纹（不落盘）
-#[tauri::command]
-pub async fn preview_generate_profile() -> Result<crate::models::DeviceProfile, String> {
-    Ok(crate::modules::device::generate_profile())
-}
-
-/// 使用给定指纹直接绑定
-#[tauri::command]
-pub async fn bind_device_profile_with_profile(
-    account_id: String,
-    profile: crate::models::DeviceProfile,
-) -> Result<crate::models::DeviceProfile, String> {
-    modules::bind_device_profile_with_profile(&account_id, profile, Some("generated".to_string()))
-}
-
-/// 将账号已绑定的指纹应用到 storage.json
-#[tauri::command]
-pub async fn apply_device_profile(
-    account_id: String,
-) -> Result<crate::models::DeviceProfile, String> {
-    modules::apply_device_profile(&account_id)
-}
-
-/// 恢复最早的 storage.json 备份（近似“原始”状态）
-#[tauri::command]
-pub async fn restore_original_device() -> Result<String, String> {
-    modules::restore_original_device()
-}
-
-/// 列出指纹版本
-#[tauri::command]
-pub async fn list_device_versions(
-    account_id: String,
-) -> Result<modules::account::DeviceProfiles, String> {
-    modules::list_device_versions(&account_id)
-}
-
-/// 按版本恢复指纹
-#[tauri::command]
-pub async fn restore_device_version(
-    account_id: String,
-    version_id: String,
-) -> Result<crate::models::DeviceProfile, String> {
-    modules::restore_device_version(&account_id, &version_id)
-}
-
-/// 删除历史指纹（baseline 不可删）
-#[tauri::command]
-pub async fn delete_device_version(account_id: String, version_id: String) -> Result<(), String> {
-    modules::delete_device_version(&account_id, &version_id)
-}
-
-/// 打开设备存储目录
-#[tauri::command]
-pub async fn open_device_folder(app: tauri::AppHandle) -> Result<(), String> {
-    let dir = modules::device::get_storage_dir()?;
-    let dir_str = dir
-        .to_str()
-        .ok_or("无法解析存储目录路径为字符串")?
-        .to_string();
-    app.opener()
-        .open_path(dir_str, None::<&str>)
-        .map_err(|e| format!("打开目录失败: {}", e))
-}
 
 /// 加载配置
 #[tauri::command]
@@ -368,13 +282,13 @@ pub async fn save_config(
             .axum_server
             .update_debug_logging(&config.proxy)
             .await;
-        // [NEW] 更新 User-Agent 配置
+        // 更新 User-Agent 配置
         instance.axum_server.update_user_agent(&config.proxy).await;
         // 更新 Thinking Budget 配置
         crate::proxy::update_thinking_budget_config(config.proxy.thinking_budget.clone());
-        // [NEW] 更新全局系统提示词配置
+        // 更新全局系统提示词配置
         crate::proxy::update_global_system_prompt_config(config.proxy.global_system_prompt.clone());
-        // [NEW] 更新全局图像思维模式配置
+        // 更新全局图像思维模式配置
         crate::proxy::update_image_thinking_mode(config.proxy.image_thinking_mode.clone());
         // 更新代理池配置
         instance
@@ -392,16 +306,31 @@ pub async fn save_config(
     Ok(())
 }
 
-// --- OAuth 命令 ---
+// --- Device Flow OAuth 命令 ---
 
+/// 开始 GitHub Device Flow 登录
 #[tauri::command]
-pub async fn start_oauth_login(app_handle: tauri::AppHandle) -> Result<Account, String> {
-    modules::logger::log_info("开始 OAuth 授权流程...");
+pub async fn start_device_flow(
+    app_handle: tauri::AppHandle,
+) -> Result<modules::oauth_server::DeviceFlowInfo, String> {
+    modules::logger::log_info("开始 GitHub Device Flow 登录...");
+    let service = modules::account_service::AccountService::new(
+        crate::modules::integration::SystemManager::Desktop(app_handle.clone()),
+    );
+    service.start_device_flow().await
+}
+
+/// 完成 Device Flow 登录 (轮询等待授权)
+#[tauri::command]
+pub async fn complete_device_flow(
+    app_handle: tauri::AppHandle,
+) -> Result<Account, String> {
+    modules::logger::log_info("等待 Device Flow 授权完成...");
     let service = modules::account_service::AccountService::new(
         crate::modules::integration::SystemManager::Desktop(app_handle.clone()),
     );
 
-    let mut account = service.start_oauth_login().await?;
+    let mut account = service.complete_device_flow().await?;
 
     // 自动触发刷新额度
     let _ = internal_refresh_account_quota(&app_handle, &mut account).await;
@@ -415,155 +344,42 @@ pub async fn start_oauth_login(app_handle: tauri::AppHandle) -> Result<Account, 
     Ok(account)
 }
 
-/// 完成 OAuth 授权（不自动打开浏览器）
+/// 取消 Device Flow
 #[tauri::command]
-pub async fn complete_oauth_login(app_handle: tauri::AppHandle) -> Result<Account, String> {
-    modules::logger::log_info("完成 OAuth 授权流程 (manual)...");
-    let service = modules::account_service::AccountService::new(
-        crate::modules::integration::SystemManager::Desktop(app_handle.clone()),
-    );
-
-    let mut account = service.complete_oauth_login().await?;
-
-    // 自动触发刷新额度
-    let _ = internal_refresh_account_quota(&app_handle, &mut account).await;
-
-    // Reload token pool
-    let _ = crate::commands::proxy::reload_proxy_accounts(
-        app_handle.state::<crate::commands::proxy::ProxyServiceState>(),
-    )
-    .await;
-
-    Ok(account)
+pub async fn cancel_device_flow() -> Result<(), String> {
+    modules::oauth_server::cancel_device_flow()
 }
 
-/// 预生成 OAuth 授权链接 (不打开浏览器)
+/// 检查 Device Flow 是否处于活动状态
 #[tauri::command]
-pub async fn prepare_oauth_url(app_handle: tauri::AppHandle) -> Result<String, String> {
-    let service = modules::account_service::AccountService::new(
-        crate::modules::integration::SystemManager::Desktop(app_handle.clone()),
-    );
-    service.prepare_oauth_url().await
+pub async fn is_device_flow_active() -> Result<bool, String> {
+    Ok(modules::oauth_server::is_device_flow_active())
 }
 
+/// 获取当前 Device Flow 信息
 #[tauri::command]
-pub async fn cancel_oauth_login() -> Result<(), String> {
-    modules::oauth_server::cancel_oauth_flow();
-    Ok(())
-}
-
-/// 手动提交 OAuth Code (用于 Docker/远程环境无法自动回调时)
-#[tauri::command]
-pub async fn submit_oauth_code(code: String, state: Option<String>) -> Result<(), String> {
-    modules::logger::log_info("收到手动提交 OAuth Code 请求");
-    modules::oauth_server::submit_oauth_code(code, state).await
+pub async fn get_device_flow_info() -> Result<Option<modules::oauth_server::DeviceFlowInfo>, String> {
+    Ok(modules::oauth_server::get_current_device_flow_info())
 }
 
 // --- 导入命令 ---
 
+/// 从导出数据导入账号
 #[tauri::command]
-pub async fn import_v1_accounts(
+pub async fn import_accounts(
     app: tauri::AppHandle,
     proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
-) -> Result<Vec<Account>, String> {
-    let accounts = modules::migration::import_from_v1().await?;
+    export_data: AccountExportResponse,
+) -> Result<modules::migration::ImportStats, String> {
+    let stats = modules::migration::import_accounts_from_export(&export_data)?;
 
-    // 对导入的账号尝试刷新一波
-    for mut account in accounts.clone() {
-        let _ = internal_refresh_account_quota(&app, &mut account).await;
-    }
-
-    // Reload token pool
-    let _ = crate::commands::proxy::reload_proxy_accounts(proxy_state).await;
-
-    Ok(accounts)
-}
-
-#[tauri::command]
-pub async fn import_from_db(
-    app: tauri::AppHandle,
-    proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
-) -> Result<Account, String> {
-    // 同步函数包装为 async
-    let mut account = modules::migration::import_from_db().await?;
-
-    // 既然是从数据库导入（即 IDE 当前账号），自动将其设为 Manager 的当前账号
-    let account_id = account.id.clone();
-    modules::account::set_current_account_id(&account_id)?;
-
-    // 自动触发刷新额度
-    let _ = internal_refresh_account_quota(&app, &mut account).await;
-
-    // 刷新托盘图标展示
+    // 更新托盘
     crate::modules::tray::update_tray_menus(&app);
 
     // Reload token pool
     let _ = crate::commands::proxy::reload_proxy_accounts(proxy_state).await;
 
-    Ok(account)
-}
-
-#[tauri::command]
-#[allow(dead_code)]
-pub async fn import_custom_db(
-    app: tauri::AppHandle,
-    proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
-    path: String,
-) -> Result<Account, String> {
-    // 调用重构后的自定义导入函数
-    let mut account = modules::migration::import_from_custom_db_path(path).await?;
-
-    // 自动设为当前账号
-    let account_id = account.id.clone();
-    modules::account::set_current_account_id(&account_id)?;
-
-    // 自动触发刷新额度
-    let _ = internal_refresh_account_quota(&app, &mut account).await;
-
-    // 刷新托盘图标展示
-    crate::modules::tray::update_tray_menus(&app);
-
-    // Reload token pool
-    let _ = crate::commands::proxy::reload_proxy_accounts(proxy_state).await;
-
-    Ok(account)
-}
-
-#[tauri::command]
-pub async fn sync_account_from_db(
-    app: tauri::AppHandle,
-    proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
-) -> Result<Option<Account>, String> {
-    // 1. 获取 DB 中的 Refresh Token
-    let db_refresh_token = match modules::migration::get_refresh_token_from_db() {
-        Ok(token) => token,
-        Err(e) => {
-            modules::logger::log_info(&format!("自动同步跳过: {}", e));
-            return Ok(None);
-        }
-    };
-
-    // 2. 获取 Manager 当前账号
-    let curr_account = modules::account::get_current_account()?;
-
-    // 3. 对比：如果 Refresh Token 相同，说明账号没变，无需导入
-    if let Some(acc) = curr_account {
-        if acc.token.refresh_token == db_refresh_token {
-            // 账号未变，由于已经是周期性任务，我们可以选择性刷新一下配额，或者直接返回
-            // 这里为了节省 API 流量，直接返回
-            return Ok(None);
-        }
-        modules::logger::log_info(&format!(
-            "检测到账号切换 ({} -> DB新账号)，正在同步...",
-            acc.email
-        ));
-    } else {
-        modules::logger::log_info("检测到新登录账号，正在自动同步...");
-    }
-
-    // 4. 执行完整导入
-    let account = import_from_db(app, proxy_state).await?;
-    Ok(Some(account))
+    Ok(stats)
 }
 
 fn validate_path(path: &str) -> Result<(), String> {
@@ -614,14 +430,13 @@ pub async fn clear_log_cache() -> Result<(), String> {
     modules::logger::clear_logs()
 }
 
-/// 清理 Antigravity 应用缓存
-/// 用于解决登录失败、版本验证错误等问题
+/// 清理应用缓存
 #[tauri::command]
 pub async fn clear_antigravity_cache() -> Result<modules::cache::ClearResult, String> {
     modules::cache::clear_antigravity_cache(None)
 }
 
-/// 获取 Antigravity 缓存路径列表（用于预览）
+/// 获取缓存路径列表（用于预览）
 #[tauri::command]
 pub async fn get_antigravity_cache_paths() -> Result<Vec<String>, String> {
     Ok(modules::cache::get_existing_cache_paths()
@@ -687,36 +502,6 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
     };
 
     window.set_theme(tauri_theme).map_err(|e| e.to_string())
-}
-
-/// 获取 Antigravity 可执行文件路径
-#[tauri::command]
-pub async fn get_antigravity_path(bypass_config: Option<bool>) -> Result<String, String> {
-    // 1. 优先从配置查询 (除非明确要求绕过)
-    if bypass_config != Some(true) {
-        if let Ok(config) = crate::modules::config::load_app_config() {
-            if let Some(path) = config.antigravity_executable {
-                if std::path::Path::new(&path).exists() {
-                    return Ok(path);
-                }
-            }
-        }
-    }
-
-    // 2. 执行实时探测
-    match crate::modules::process::get_antigravity_executable_path() {
-        Some(path) => Ok(path.to_string_lossy().to_string()),
-        None => Err("未找到 Antigravity 安装路径".to_string()),
-    }
-}
-
-/// 获取 Antigravity 启动参数
-#[tauri::command]
-pub async fn get_antigravity_args() -> Result<Vec<String>, String> {
-    match crate::modules::process::get_args_from_running_process() {
-        Some(args) => Ok(args),
-        None => Err("未找到正在运行的 Antigravity 进程".to_string()),
-    }
 }
 
 /// 检测更新响应结构

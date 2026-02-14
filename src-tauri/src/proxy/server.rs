@@ -1,10 +1,10 @@
 use crate::models::AppConfig;
-use crate::modules::{account, config, logger, migration, proxy_db, security_db, token_stats};
+use crate::modules::{account, config, logger, proxy_db, security_db, token_stats};
 use crate::proxy::TokenManager;
 use axum::{
     extract::{DefaultBodyLimit, Path, Query, State},
-    http::{HeaderMap, StatusCode},
-    response::{Html, IntoResponse, Json, Response},
+    http::StatusCode,
+    response::{IntoResponse, Json, Response},
     routing::{any, delete, get, post},
     Router,
 };
@@ -134,6 +134,8 @@ struct AccountResponse {
     id: String,
     email: String,
     name: Option<String>,
+    github_login: Option<String>,
+    copilot_plan: Option<String>,
     is_current: bool,
     disabled: bool,
     disabled_reason: Option<String>,
@@ -142,12 +144,11 @@ struct AccountResponse {
     proxy_disabled_reason: Option<String>,
     proxy_disabled_at: Option<i64>,
     protected_models: Vec<String>,
-    /// [NEW] 403 验证阻止状态
+    /// [NEW] 403 validation block status
     validation_blocked: bool,
     validation_blocked_until: Option<i64>,
     validation_blocked_reason: Option<String>,
     quota: Option<QuotaResponse>,
-    device_bound: bool,
     last_used: i64,
 }
 
@@ -155,7 +156,7 @@ struct AccountResponse {
 struct QuotaResponse {
     models: Vec<ModelQuota>,
     last_updated: i64,
-    subscription_tier: Option<String>,
+    plan: Option<String>,
     is_forbidden: bool,
 }
 
@@ -180,6 +181,8 @@ fn to_account_response(
         id: account.id.clone(),
         email: account.email.clone(),
         name: account.name.clone(),
+        github_login: account.github_login.clone(),
+        copilot_plan: account.copilot_plan.clone(),
         is_current: current_id.as_ref() == Some(&account.id),
         disabled: account.disabled,
         disabled_reason: account.disabled_reason.clone(),
@@ -199,10 +202,9 @@ fn to_account_response(
                 })
                 .collect(),
             last_updated: q.last_updated,
-            subscription_tier: q.subscription_tier.clone(),
+            plan: q.plan.clone(),
             is_forbidden: q.is_forbidden,
         }),
-        device_bound: account.device_profile.is_some(),
         last_used: account.last_used,
         validation_blocked: account.validation_blocked,
         validation_blocked_until: account.validation_blocked_until,
@@ -462,39 +464,6 @@ impl AxumServer {
             .route("/accounts/switch", post(admin_switch_account))
             .route("/accounts/refresh", post(admin_refresh_all_quotas))
             .route("/accounts/:accountId", delete(admin_delete_account))
-            .route("/accounts/:accountId/bind-device", post(admin_bind_device))
-            .route(
-                "/accounts/:accountId/device-profiles",
-                get(admin_get_device_profiles),
-            )
-            .route(
-                "/accounts/:accountId/device-versions",
-                get(admin_list_device_versions),
-            )
-            .route(
-                "/accounts/device-preview",
-                post(admin_preview_generate_profile),
-            )
-            .route(
-                "/accounts/:accountId/bind-device-profile",
-                post(admin_bind_device_profile_with_profile),
-            )
-            .route(
-                "/accounts/restore-original",
-                post(admin_restore_original_device),
-            )
-            .route(
-                "/accounts/:accountId/device-versions/:versionId/restore",
-                post(admin_restore_device_version),
-            )
-            .route(
-                "/accounts/:accountId/device-versions/:versionId",
-                delete(admin_delete_device_version),
-            )
-            .route("/accounts/import/v1", post(admin_import_v1_accounts))
-            .route("/accounts/import/db", post(admin_import_from_db))
-            .route("/accounts/import/db-custom", post(admin_import_custom_db))
-            .route("/accounts/sync/db", post(admin_sync_account_from_db))
             .route("/stats/summary", get(admin_get_token_stats_summary))
             .route("/stats/hourly", get(admin_get_token_stats_hourly))
             .route("/stats/daily", get(admin_get_token_stats_daily))
@@ -539,11 +508,9 @@ impl AxumServer {
                 "/proxy/preferred-account",
                 get(admin_get_preferred_account).post(admin_set_preferred_account),
             )
-            .route("/accounts/oauth/prepare", post(admin_prepare_oauth_url))
-            .route("/accounts/oauth/start", post(admin_start_oauth_login))
-            .route("/accounts/oauth/complete", post(admin_complete_oauth_login))
-            .route("/accounts/oauth/cancel", post(admin_cancel_oauth_login))
-            .route("/accounts/oauth/submit-code", post(admin_submit_oauth_code))
+            .route("/accounts/device-flow/start", post(admin_start_device_flow))
+            .route("/accounts/device-flow/complete", post(admin_complete_device_flow))
+            .route("/accounts/device-flow/cancel", post(admin_cancel_device_flow))
             .route("/zai/models/fetch", post(admin_fetch_zai_models))
             .route(
                 "/proxy/monitor/toggle",
@@ -625,13 +592,6 @@ impl AxumServer {
                 "/system/http-api/settings",
                 get(admin_get_http_api_settings).post(admin_save_http_api_settings),
             )
-            .route("/system/antigravity/path", get(admin_get_antigravity_path))
-            .route("/system/antigravity/args", get(admin_get_antigravity_args))
-            .route("/system/cache/clear", post(admin_clear_antigravity_cache))
-            .route(
-                "/system/cache/paths",
-                get(admin_get_antigravity_cache_paths),
-            )
             .route("/system/logs/clear-cache", post(admin_clear_log_cache))
             // Security / IP Monitoring
             .route("/security/logs", get(admin_get_ip_access_logs))
@@ -650,8 +610,6 @@ impl AxumServer {
             .route("/user-tokens/summary", get(admin_get_user_token_summary))
             .route("/user-tokens/:id/renew", post(admin_renew_user_token))
             .route("/user-tokens/:id", delete(admin_delete_user_token).patch(admin_update_user_token))
-            // OAuth (Web) - Admin 接口
-            .route("/auth/url", get(admin_prepare_oauth_url_web))
             // 应用管理特定鉴权层 (强制校验)
             .layer(axum::middleware::from_fn_with_state(
                 state.clone(),
@@ -670,7 +628,6 @@ impl AxumServer {
             .nest("/api", admin_routes)
             .merge(proxy_routes)
             // 公开路由 (无需鉴权)
-            .route("/auth/callback", get(handle_oauth_callback))
             // 应用全局监控与状态层 (外层)
             .layer(axum::middleware::from_fn_with_state(
                 state.clone(),
@@ -829,7 +786,7 @@ async fn admin_list_accounts(
                     })
                     .collect(),
                 last_updated: q.last_updated,
-                subscription_tier: q.subscription_tier,
+                plan: q.plan,
                 is_forbidden: q.is_forbidden,
             });
 
@@ -837,6 +794,8 @@ async fn admin_list_accounts(
                 id: acc.id,
                 email: acc.email,
                 name: acc.name,
+                github_login: acc.github_login,
+                copilot_plan: acc.copilot_plan,
                 is_current,
                 disabled: acc.disabled,
                 disabled_reason: acc.disabled_reason,
@@ -849,7 +808,6 @@ async fn admin_list_accounts(
                 validation_blocked_until: acc.validation_blocked_until,
                 validation_blocked_reason: acc.validation_blocked_reason,
                 quota,
-                device_bound: acc.device_profile.is_some(),
                 last_used: acc.last_used,
             }
         })
@@ -861,7 +819,7 @@ async fn admin_list_accounts(
     }))
 }
 
-/// Export accounts with refresh tokens (for backup/migration)
+/// Export accounts with github tokens (for backup)
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ExportAccountsRequest {
@@ -906,7 +864,7 @@ async fn admin_get_current_account(
                     })
                     .collect(),
                 last_updated: q.last_updated,
-                subscription_tier: q.subscription_tier,
+                plan: q.plan,
                 is_forbidden: q.is_forbidden,
             });
 
@@ -914,6 +872,8 @@ async fn admin_get_current_account(
                 id: acc.id,
                 email: acc.email,
                 name: acc.name,
+                github_login: acc.github_login,
+                copilot_plan: acc.copilot_plan,
                 is_current: true,
                 disabled: acc.disabled,
                 disabled_reason: acc.disabled_reason,
@@ -926,7 +886,6 @@ async fn admin_get_current_account(
                 validation_blocked_until: acc.validation_blocked_until,
                 validation_blocked_reason: acc.validation_blocked_reason,
                 quota,
-                device_bound: acc.device_profile.is_some(),
                 last_used: acc.last_used,
             }
         })
@@ -940,7 +899,7 @@ async fn admin_get_current_account(
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AddAccountRequest {
-    refresh_token: String,
+    github_token: String,
 }
 
 async fn admin_add_account(
@@ -949,7 +908,7 @@ async fn admin_add_account(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let account = state
         .account_service
-        .add_account(&payload.refresh_token)
+        .add_account(&payload.github_token)
         .await
         .map_err(|e| {
             (
@@ -1075,14 +1034,14 @@ async fn admin_refresh_all_quotas() -> Result<impl IntoResponse, (StatusCode, Js
     Ok(Json(stats))
 }
 
-// --- OAuth Handlers ---
+// --- Device Flow Handlers ---
 
-async fn admin_prepare_oauth_url(
+async fn admin_start_device_flow(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let url = state
+    let info = state
         .account_service
-        .prepare_oauth_url()
+        .start_device_flow()
         .await
         .map_err(|e| {
             (
@@ -1090,110 +1049,65 @@ async fn admin_prepare_oauth_url(
                 Json(ErrorResponse { error: e }),
             )
         })?;
-    Ok(Json(serde_json::json!({ "url": url })))
-}
-
-async fn admin_start_oauth_login(
-    State(state): State<AppState>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let account = state
-        .account_service
-        .start_oauth_login()
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse { error: e }),
-            )
-        })?;
-    let current_id = state.account_service.get_current_id().map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-    Ok(Json(to_account_response(&account, &current_id)))
-}
-
-async fn admin_complete_oauth_login(
-    State(state): State<AppState>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let account = state
-        .account_service
-        .complete_oauth_login()
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse { error: e }),
-            )
-        })?;
-    let current_id = state.account_service.get_current_id().map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-    Ok(Json(to_account_response(&account, &current_id)))
-}
-
-async fn admin_cancel_oauth_login(
-    State(state): State<AppState>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    state.account_service.cancel_oauth_login();
-    Ok(StatusCode::OK)
-}
-
-#[derive(Deserialize)]
-struct SubmitCodeRequest {
-    code: String,
-    state: Option<String>,
-}
-
-async fn admin_submit_oauth_code(
-    State(state): State<AppState>,
-    Json(payload): Json<SubmitCodeRequest>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    state
-        .account_service
-        .submit_oauth_code(payload.code, payload.state)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse { error: e }),
-            )
-        })?;
-    Ok(StatusCode::OK)
-}
-
-#[derive(Deserialize)]
-struct BindDeviceRequest {
-    #[serde(default = "default_bind_mode")]
-    mode: String,
-}
-
-fn default_bind_mode() -> String {
-    "generate".to_string()
-}
-
-async fn admin_bind_device(
-    Path(account_id): Path<String>,
-    Json(payload): Json<BindDeviceRequest>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let result = account::bind_device_profile(&account_id, &payload.mode).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-
     Ok(Json(serde_json::json!({
-        "success": true,
-        "message": "Device fingerprint bound successfully",
-        "device_profile": result,
+        "verification_uri": info.verification_uri,
+        "user_code": info.user_code,
+        "expires_in": info.expires_in,
     })))
 }
+
+
+
+
+
+
+
+
+
+async fn admin_complete_device_flow(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let account = state
+        .account_service
+        .complete_device_flow()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })?;
+
+    // [FIX #1166] Reload TokenManager after account added via device flow
+    if let Err(e) = state.token_manager.load_accounts().await {
+        logger::log_error(&format!(
+            "[API] Failed to reload accounts after device flow: {}",
+            e
+        ));
+    }
+
+    let current_id = state.account_service.get_current_id().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+    Ok(Json(to_account_response(&account, &current_id)))
+}
+
+async fn admin_cancel_device_flow(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    state.account_service.cancel_device_flow().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+    Ok(StatusCode::OK)
+}
+
+
 
 #[derive(Deserialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
@@ -1815,53 +1729,6 @@ async fn admin_should_check_updates() -> Result<impl IntoResponse, (StatusCode, 
     Ok(Json(should))
 }
 
-async fn admin_get_antigravity_path() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)>
-{
-    let path = crate::commands::get_antigravity_path(Some(true))
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse { error: e }),
-            )
-        })?;
-    Ok(Json(path))
-}
-
-async fn admin_get_antigravity_args() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)>
-{
-    let args = crate::commands::get_antigravity_args().await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-    Ok(Json(args))
-}
-
-async fn admin_clear_antigravity_cache(
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let res = crate::commands::clear_antigravity_cache().await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-    Ok(Json(res))
-}
-
-async fn admin_get_antigravity_cache_paths(
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let res = crate::commands::get_antigravity_cache_paths()
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse { error: e }),
-            )
-        })?;
-    Ok(Json(res))
-}
 
 async fn admin_clear_log_cache() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     crate::commands::clear_log_cache().await.map_err(|e| {
@@ -2465,133 +2332,6 @@ async fn admin_cloudflared_stop(
     }
 }
 
-// --- Supplementary Account Handlers ---
-
-async fn admin_get_device_profiles(
-    State(_state): State<AppState>,
-    Path(account_id): Path<String>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let profiles = account::get_device_profiles(&account_id).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-    Ok(Json(profiles))
-}
-
-async fn admin_list_device_versions(
-    State(_state): State<AppState>,
-    Path(account_id): Path<String>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let profiles = account::get_device_profiles(&account_id).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-    Ok(Json(profiles))
-}
-
-async fn admin_preview_generate_profile(
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let profile = crate::modules::device::generate_profile();
-    Ok(Json(profile))
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct BindDeviceProfileWrapper {
-    #[serde(default)]
-    account_id: String,
-    #[serde(alias = "profile")]
-    profile_wrapper: DeviceProfileApiWrapper,
-}
-
-// 用于 API 的 DeviceProfile 包装器，支持 camelCase 输入
-#[derive(Deserialize)]
-struct DeviceProfileApiWrapper {
-    #[serde(alias = "machineId")]
-    machine_id: String,
-    #[serde(alias = "macMachineId")]
-    mac_machine_id: String,
-    #[serde(alias = "devDeviceId")]
-    dev_device_id: String,
-    #[serde(alias = "sqmId")]
-    sqm_id: String,
-}
-
-impl From<DeviceProfileApiWrapper> for crate::models::account::DeviceProfile {
-    fn from(wrapper: DeviceProfileApiWrapper) -> Self {
-        Self {
-            machine_id: wrapper.machine_id,
-            mac_machine_id: wrapper.mac_machine_id,
-            dev_device_id: wrapper.dev_device_id,
-            sqm_id: wrapper.sqm_id,
-        }
-    }
-}
-
-async fn admin_bind_device_profile_with_profile(
-    State(_state): State<AppState>,
-    Path(account_id): Path<String>,
-    Json(payload): Json<BindDeviceProfileWrapper>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    // 优先使用 payload 中的 account_id（前端发送的），如果没有则使用路径参数
-    let target_account_id = if !payload.account_id.is_empty() {
-        &payload.account_id
-    } else {
-        &account_id
-    };
-    
-    let profile: crate::models::account::DeviceProfile = payload.profile_wrapper.into();
-    
-    let result =
-        account::bind_device_profile_with_profile(target_account_id, profile, None).map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse { error: e }),
-            )
-        })?;
-    Ok(Json(result))
-}
-
-async fn admin_restore_original_device(
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let msg = account::restore_original_device().map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-    Ok(Json(msg))
-}
-
-async fn admin_restore_device_version(
-    State(_state): State<AppState>,
-    Path((account_id, version_id)): Path<(String, String)>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let profile = account::restore_device_version(&account_id, &version_id).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-    Ok(Json(profile))
-}
-
-async fn admin_delete_device_version(
-    State(_state): State<AppState>,
-    Path((account_id, version_id)): Path<(String, String)>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    account::delete_device_version(&account_id, &version_id).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-    Ok(StatusCode::NO_CONTENT)
-}
 
 async fn admin_open_folder() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     // Note: In Web mode, this may not actually open a local folder unless the backend handles it.
@@ -2605,137 +2345,6 @@ async fn admin_open_folder() -> Result<impl IntoResponse, (StatusCode, Json<Erro
     Ok(StatusCode::OK)
 }
 
-// --- Import Handlers ---
-
-async fn admin_import_v1_accounts(
-    State(state): State<AppState>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let accounts = migration::import_from_v1().await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-
-    // [FIX #1166] 导入后立即加载
-    let _ = state.token_manager.load_accounts().await;
-
-    let current_id = state.account_service.get_current_id().map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-    let responses: Vec<AccountResponse> = accounts
-        .iter()
-        .map(|a| to_account_response(a, &current_id))
-        .collect();
-    Ok(Json(responses))
-}
-
-async fn admin_import_from_db(
-    State(state): State<AppState>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let account = migration::import_from_db().await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-
-    // [FIX #1166] 导入后立即加载
-    let _ = state.token_manager.load_accounts().await;
-
-    let current_id = state.account_service.get_current_id().map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-    Ok(Json(to_account_response(&account, &current_id)))
-}
-
-#[derive(Deserialize)]
-struct CustomDbRequest {
-    path: String,
-}
-
-async fn admin_import_custom_db(
-    State(state): State<AppState>,
-    Json(payload): Json<CustomDbRequest>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    // [SECURITY] 禁止目录遍历
-    if payload.path.contains("..") {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "非法路径: 不允许目录遍历".to_string(),
-            }),
-        ));
-    }
-
-    let account = migration::import_from_custom_db_path(payload.path)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse { error: e }),
-            )
-        })?;
-
-    // [FIX #1166] 导入后立即加载
-    let _ = state.token_manager.load_accounts().await;
-
-    let current_id = state.account_service.get_current_id().map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-    Ok(Json(to_account_response(&account, &current_id)))
-}
-
-async fn admin_sync_account_from_db(
-    State(state): State<AppState>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    // 逻辑参考自 sync_account_from_db command
-    let db_refresh_token = match migration::get_refresh_token_from_db() {
-        Ok(token) => token,
-        Err(_e) => {
-            return Ok(Json(None));
-        }
-    };
-    let curr_account = account::get_current_account().map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-
-    if let Some(acc) = curr_account {
-        if acc.token.refresh_token == db_refresh_token {
-            return Ok(Json(None));
-        }
-    }
-
-    let account = migration::import_from_db().await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-
-    // [FIX #1166] 同步后立即重新加载 TokenManager
-    let _ = state.token_manager.load_accounts().await;
-
-    let current_id = state.account_service.get_current_id().map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-    Ok(Json(Some(to_account_response(&account, &current_id))))
-}
 
 // --- CLI Sync Handlers ---
 
@@ -2824,234 +2433,6 @@ async fn admin_get_cli_config_content(
         })
 }
 
-#[derive(Deserialize)]
-struct OAuthParams {
-    code: String,
-    #[allow(dead_code)]
-    state: Option<String>,
-    #[allow(dead_code)]
-    scope: Option<String>,
-}
-
-async fn handle_oauth_callback(
-    Query(params): Query<OAuthParams>,
-    headers: HeaderMap,
-    State(state): State<AppState>,
-) -> Result<Html<String>, StatusCode> {
-    let code = params.code;
-
-    // Exchange token
-    let port = state.security.read().await.port;
-    let host = headers.get("host").and_then(|h| h.to_str().ok());
-    let proto = headers
-        .get("x-forwarded-proto")
-        .and_then(|h| h.to_str().ok());
-    let redirect_uri = get_oauth_redirect_uri(port, host, proto);
-
-    match state
-        .token_manager
-        .exchange_code(&code, &redirect_uri)
-        .await
-    {
-        Ok(refresh_token) => {
-            match state.token_manager.get_user_info(&refresh_token).await {
-                Ok(user_info) => {
-                    let email = user_info.email;
-                    if let Err(e) = state
-                        .token_manager
-                        .add_account(&email, &refresh_token)
-                        .await
-                    {
-                        error!("Failed to add account: {}", e);
-                        return Ok(Html(format!(
-                            r#"<html><body><h1>Authorization Failed</h1><p>Failed to save account: {}</p></body></html>"#,
-                            e
-                        )));
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to get user info: {}", e);
-                    return Ok(Html(format!(
-                        r#"<html><body><h1>Authorization Failed</h1><p>Failed to get user info: {}</p></body></html>"#,
-                        e
-                    )));
-                }
-            }
-
-            // Success HTML
-            Ok(Html(format!(
-                r#"
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <title>Authorization Successful</title>
-                    <style>
-                        body {{ font-family: system-ui, -apple-system, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background-color: #f9fafb; padding: 20px; box-sizing: border-box; }}
-                        .card {{ background: white; padding: 2rem; border-radius: 1.5rem; box-shadow: 0 10px 25px -5px rgb(0 0 0 / 0.1); text-align: center; max-width: 500px; width: 100%; }}
-                        .icon {{ font-size: 3rem; margin-bottom: 1rem; }}
-                        h1 {{ color: #059669; margin: 0 0 1rem 0; font-size: 1.5rem; }}
-                        p {{ color: #4b5563; line-height: 1.5; margin-bottom: 1.5rem; }}
-                        .fallback-box {{ background-color: #f3f4f6; padding: 1.25rem; border-radius: 1rem; border: 1px dashed #d1d5db; text-align: left; margin-top: 1.5rem; }}
-                        .fallback-title {{ font-weight: 600; font-size: 0.875rem; color: #1f2937; margin-bottom: 0.5rem; display: block; }}
-                        .fallback-text {{ font-size: 0.75rem; color: #6b7280; margin-bottom: 1rem; display: block; }}
-                        .copy-btn {{ width: 100%; padding: 0.75rem; background-color: #3b82f6; color: white; border: none; border-radius: 0.75rem; font-weight: 500; cursor: pointer; transition: background-color 0.2s; }}
-                        .copy-btn:hover {{ background-color: #2563eb; }}
-                    </style>
-                </head>
-                <body>
-                    <div class="card">
-                        <div class="icon">✅</div>
-                        <h1>Authorization Successful</h1>
-                        <p>You can close this window now. The application should refresh automatically.</p>
-                        
-                        <div class="fallback-box">
-                            <span class="fallback-title">💡 Did it not refresh?</span>
-                            <span class="fallback-text">If the application is running in a container or remote environment, you may need to manually copy the link below:</span>
-                            <button onclick="copyUrl()" class="copy-btn" id="copyBtn">Copy Completion Link</button>
-                        </div>
-                    </div>
-                    <script>
-                        // 1. Notify opener if exists
-                        if (window.opener) {{
-                            window.opener.postMessage({{
-                                type: 'oauth-success',
-                                message: 'login success'
-                            }}, '*');
-                        }}
-
-                        // 2. Copy URL functionality
-                        function copyUrl() {{
-                            navigator.clipboard.writeText(window.location.href).then(() => {{
-                                const btn = document.getElementById('copyBtn');
-                                const originalText = btn.innerText;
-                                btn.innerText = '✅ Link Copied!';
-                                btn.style.backgroundColor = '#059669';
-                                setTimeout(() => {{
-                                    btn.innerText = originalText;
-                                    btn.style.backgroundColor = '#3b82f6';
-                                }}, 2000);
-                            }});
-                        }}
-                    </script>
-                </body>
-                </html>
-            "#
-            )))
-        }
-        Err(e) => {
-            error!("OAuth exchange failed: {}", e);
-            Ok(Html(format!(
-                r#"<html><body><h1>Authorization Failed</h1><p>Error: {}</p></body></html>"#,
-                e
-            )))
-        }
-    }
-}
-
-async fn admin_prepare_oauth_url_web(
-    headers: HeaderMap,
-    State(state): State<AppState>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let port = state.security.read().await.port;
-    let host = headers.get("host").and_then(|h| h.to_str().ok());
-    let proto = headers
-        .get("x-forwarded-proto")
-        .and_then(|h| h.to_str().ok());
-    let redirect_uri = get_oauth_redirect_uri(port, host, proto);
-
-    let state_str = uuid::Uuid::new_v4().to_string();
-
-    // 初始化授权流状态，以及后台处理器
-    let (auth_url, mut code_rx) = crate::modules::oauth_server::prepare_oauth_flow_manually(
-        redirect_uri.clone(),
-        state_str.clone(),
-    )
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-
-    // 启动后台任务处理回调/手动提交的代码
-    let token_manager = state.token_manager.clone();
-    let redirect_uri_clone = redirect_uri.clone();
-    tokio::spawn(async move {
-        match code_rx.recv().await {
-            Some(Ok(code)) => {
-                crate::modules::logger::log_info(
-                    "Consuming manually submitted OAuth code in background",
-                );
-                // 为 Web 回调提供简化的后端处理流程
-                match crate::modules::oauth::exchange_code(&code, &redirect_uri_clone).await {
-                    Ok(token_resp) => {
-                        // Success! Now add/upsert account
-                        if let Some(refresh_token) = &token_resp.refresh_token {
-                            match token_manager.get_user_info(refresh_token).await {
-                                Ok(user_info) => {
-                                    if let Err(e) = token_manager
-                                        .add_account(&user_info.email, refresh_token)
-                                        .await
-                                    {
-                                        crate::modules::logger::log_error(&format!(
-                                            "Failed to save account in background OAuth: {}",
-                                            e
-                                        ));
-                                    } else {
-                                        crate::modules::logger::log_info(&format!(
-                                            "Successfully added account {} via background OAuth",
-                                            user_info.email
-                                        ));
-                                    }
-                                }
-                                Err(e) => {
-                                    crate::modules::logger::log_error(&format!(
-                                        "Failed to fetch user info in background OAuth: {}",
-                                        e
-                                    ));
-                                }
-                            }
-                        } else {
-                            crate::modules::logger::log_error(
-                                "Background OAuth error: Google did not return a refresh_token.",
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        crate::modules::logger::log_error(&format!(
-                            "Background OAuth exchange failed: {}",
-                            e
-                        ));
-                    }
-                }
-            }
-            Some(Err(e)) => {
-                crate::modules::logger::log_error(&format!("Background OAuth flow error: {}", e));
-            }
-            None => {
-                crate::modules::logger::log_info("Background OAuth flow channel closed");
-            }
-        }
-    });
-
-    Ok(Json(serde_json::json!({
-        "url": auth_url,
-        "state": state_str
-    })))
-}
-
-/// 辅助函数：获取 OAuth 重定向 URI
-/// 强制使用 localhost，以绕过 Google 2.0 政策对 IP 地址和非 HTTPS 环境的拦截。
-/// 只有在显式设置了 ABV_PUBLIC_URL (例如用户配置了 HTTPS 域名) 时才会使用外部地址。
-fn get_oauth_redirect_uri(port: u16, _host: Option<&str>, _proto: Option<&str>) -> String {
-    if let Ok(public_url) = std::env::var("ABV_PUBLIC_URL") {
-        let base = public_url.trim_end_matches('/');
-        format!("{}/auth/callback", base)
-    } else {
-        // 强制返回 localhost。远程部署时，用户可通过回填功能完成授权。
-        format!("http://localhost:{}/auth/callback", port)
-    }
-}
 
 // ============================================================================
 // Security / IP Management Handlers

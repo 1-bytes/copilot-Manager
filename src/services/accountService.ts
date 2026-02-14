@@ -1,14 +1,5 @@
-import i18n from '../i18n';
-import { Account, DeviceProfile, DeviceProfileVersion, QuotaData } from '../types/account';
+import { Account, QuotaData } from '../types/account';
 import { request as invoke } from '../utils/request';
-
-// 检查环境 (可选)
-function ensureTauriEnvironment() {
-    // Web 模式下 request 也是一个 function，所以这里不应抛错
-    if (typeof invoke !== 'function') {
-        throw new Error(i18n.t('common.tauri_api_not_loaded'));
-    }
-}
 
 export async function listAccounts(): Promise<Account[]> {
     const response = await invoke<any>('list_accounts');
@@ -24,8 +15,8 @@ export async function getCurrentAccount(): Promise<Account | null> {
     return await invoke('get_current_account');
 }
 
-export async function addAccount(email: string, refreshToken: string): Promise<Account> {
-    return await invoke('add_account', { email, refreshToken });
+export async function addAccount(_email: string, githubToken: string): Promise<Account> {
+    return await invoke('add_account', { app: null, email: '', githubToken });
 }
 
 export async function deleteAccount(accountId: string): Promise<void> {
@@ -55,61 +46,28 @@ export async function refreshAllQuotas(): Promise<RefreshStats> {
     return await invoke('refresh_all_quotas');
 }
 
-// OAuth
-export async function startOAuthLogin(): Promise<Account> {
-    ensureTauriEnvironment();
-
-    try {
-        return await invoke('start_oauth_login');
-    } catch (error) {
-        // 增强错误信息
-        if (typeof error === 'string') {
-            // 如果是 refresh_token 缺失错误,保持原样(已包含详细说明)
-            if (error.includes('Refresh Token') || error.includes('refresh_token')) {
-                throw error;
-            }
-            // 其他错误添加上下文
-            throw i18n.t('accounts.add.oauth_error', { error });
-        }
-        throw error;
-    }
+// Device flow (GitHub)
+export interface DeviceFlowResponse {
+    user_code: string;
+    verification_uri: string;
+    expires_in: number;
 }
 
-export async function completeOAuthLogin(): Promise<Account> {
-    ensureTauriEnvironment();
-    try {
-        return await invoke('complete_oauth_login');
-    } catch (error) {
-        if (typeof error === 'string') {
-            if (error.includes('Refresh Token') || error.includes('refresh_token')) {
-                throw error;
-            }
-            throw i18n.t('accounts.add.oauth_error', { error });
-        }
-        throw error;
-    }
+export async function startDeviceFlow(): Promise<DeviceFlowResponse> {
+    return await invoke('start_device_flow');
 }
 
-export async function cancelOAuthLogin(): Promise<void> {
-    ensureTauriEnvironment();
-    return await invoke('cancel_oauth_login');
+export async function completeDeviceFlow(): Promise<Account> {
+    return await invoke('complete_device_flow');
 }
 
-// 导入
-export async function importV1Accounts(): Promise<Account[]> {
-    return await invoke('import_v1_accounts');
+export async function cancelDeviceFlow(): Promise<void> {
+    return await invoke('cancel_device_flow');
 }
 
-export async function importFromDb(): Promise<Account> {
-    return await invoke('import_from_db');
-}
-
-export async function importFromCustomDb(path: string): Promise<Account> {
-    return await invoke('import_custom_db', { path });
-}
-
-export async function syncAccountFromDb(): Promise<Account | null> {
-    return await invoke('sync_account_from_db');
+// Import accounts
+export async function importAccounts(exportData: any): Promise<void> {
+    return await invoke('import_accounts', { exportData });
 }
 
 export async function toggleProxyStatus(accountId: string, enable: boolean, reason?: string): Promise<void> {
@@ -124,62 +82,10 @@ export async function reorderAccounts(accountIds: string[]): Promise<void> {
     return await invoke('reorder_accounts', { accountIds });
 }
 
-// 设备指纹相关
-export interface DeviceProfilesResponse {
-    current_storage?: DeviceProfile;
-    history?: DeviceProfileVersion[];
-    baseline?: DeviceProfile;
-}
-
-export async function getDeviceProfiles(accountId: string): Promise<DeviceProfilesResponse> {
-    return await invoke('get_device_profiles', { accountId });
-}
-
-export async function bindDeviceProfile(accountId: string, mode: 'capture' | 'generate'): Promise<DeviceProfile> {
-    return await invoke('bind_device_profile', { accountId, mode });
-}
-
-export async function restoreOriginalDevice(): Promise<string> {
-    return await invoke('restore_original_device');
-}
-
-export async function listDeviceVersions(accountId: string): Promise<DeviceProfilesResponse> {
-    return await invoke('list_device_versions', { accountId });
-}
-
-export async function restoreDeviceVersion(accountId: string, versionId: string): Promise<DeviceProfile> {
-    return await invoke('restore_device_version', { accountId, versionId });
-}
-
-export async function deleteDeviceVersion(accountId: string, versionId: string): Promise<void> {
-    return await invoke('delete_device_version', { accountId, versionId });
-}
-
-export async function openDeviceFolder(): Promise<void> {
-    return await invoke('open_device_folder');
-}
-
-export async function previewGenerateProfile(): Promise<DeviceProfile> {
-    return await invoke('preview_generate_profile');
-}
-
-export async function bindDeviceProfileWithProfile(accountId: string, profile: DeviceProfile): Promise<DeviceProfile> {
-    return await invoke('bind_device_profile_with_profile', { accountId, profile });
-}
-
-// 预热相关
-export async function warmUpAllAccounts(): Promise<string> {
-    return await invoke('warm_up_all_accounts');
-}
-
-export async function warmUpAccount(accountId: string): Promise<string> {
-    return await invoke('warm_up_account', { accountId });
-}
-
 // 导出账号相关
 export interface ExportAccountItem {
     email: string;
-    refresh_token: string;
+    github_token: string;
 }
 
 export interface ExportAccountsResponse {
@@ -194,4 +100,3 @@ export async function exportAccounts(accountIds: string[]): Promise<ExportAccoun
 export async function updateAccountLabel(accountId: string, label: string): Promise<void> {
     return await invoke('update_account_label', { accountId, label });
 }
-

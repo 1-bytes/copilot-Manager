@@ -148,51 +148,7 @@
         "reset_time": "Время сброса",
         "switch_to": "Переключить на этот аккаунт",
         "actions": "Действия",
-        "device_fingerprint": "Отпечаток Устройства",
         "show_all_quotas": "Показать все квоты",
-        "device_fingerprint_dialog": {
-            "title": "Отпечаток Устройства",
-            "operations": "Операции с Отпечатком Устройства",
-            "generate_and_bind": "Создать и Привязать",
-            "restore_original": "Восстановить Оригинал",
-            "open_storage_directory": "Открыть Каталог Хранения",
-            "current_storage": "Текущее Хранение",
-            "effective": "Действующий",
-            "current_storage_desc": "Читается из storage.json (обновляется после применения привязки при переключении аккаунтов)",
-            "account_binding": "Привязка Аккаунта",
-            "pending_application": "Ожидает Применения",
-            "account_binding_desc": "Сохраняется как привязка после создания/восстановления, записывается в storage.json при переключении аккаунтов",
-            "historical_fingerprints": "Исторические Отпечатки (опционально восстановить/удалить)",
-            "no_history": "Нет Истории",
-            "current": "Текущий",
-            "restore": "Восстановить",
-            "delete_version": "Удалить эту версию",
-            "confirm_generate_title": "Подтвердить создание и привязку?",
-            "confirm_generate_desc": "Будет создан новый набор отпечатков устройства и установлен как текущий отпечаток. Подтвердить продолжение?",
-            "confirm_restore_title": "Подтвердить восстановление оригинального отпечатка?",
-            "confirm_restore_desc": "Будет восстановлен оригинальный отпечаток и перезаписан текущий отпечаток. Подтвердить продолжение?",
-            "cancel": "Отмена",
-            "confirm": "Подтвердить",
-            "processing": "Обработка...",
-            "loading": "Загрузка...",
-            "failed_to_load_device_info": "Не удалось загрузить информацию об устройстве",
-            "generation_failed": "Ошибка создания",
-            "binding_failed": "Ошибка привязки",
-            "restoration_failed": "Ошибка восстановления",
-            "deletion_failed": "Ошибка удаления",
-            "directory_open_failed": "Не удается открыть каталог",
-            "generated_and_bound": "Создано и привязано",
-            "restored": "Восстановлено",
-            "deleted": "Удалено",
-            "directory_opened": "Каталог хранения открыт",
-            "original_fingerprint_not_found": "Оригинальный отпечаток не найден",
-            "storage_json_not_found": "storage.json не найден, убедитесь, что Antigravity был запущен для создания файла конфигурации"
-        },
-        "warmup_all": "Разогреть все одним кликом",
-        "warmup_selected": "Разогреть ({{count}})",
-        "warmup_this": "Разогреть этот аккаунт",
-        "warmup_now": "Разогреть сейчас",
-        "warmup_batch_triggered": "Задачи разогрева запущены для {{count}} аккаунтов",
         "quota_protected": "Защищено",
         "details": {
             "title": "Детали квоты",
@@ -206,9 +162,9 @@
         "add": {
             "title": "Добавить аккаунт",
             "tabs": {
-                "oauth": "OAuth",
-                "token": "Refresh Token",
-                "import": "Импорт БД"
+                "oauth": "Device Flow",
+                "token": "GitHub Token",
+                "import": "Import"
             },
             "oauth": {
                 "recommend": "Рекомендуется",
@@ -254,6 +210,17 @@
             "oauth_error": "Ошибка OAuth: {{error}}",
             "status": {
                 "error_token": "Пожалуйста, введите Refresh Token"
+            },
+            "device_flow": {
+                "title": "GitHub Device Flow Login",
+                "start": "Start GitHub Login",
+                "code_label": "Enter this code on GitHub:",
+                "open_github": "Open GitHub",
+                "waiting": "Waiting for authorization...",
+                "expires_in": "Expires in {{time}}",
+                "success": "Authorization successful!",
+                "expired": "Code expired. Please try again.",
+                "cancelled": "Login cancelled."
             }
         },
         "table": {
@@ -329,10 +296,6 @@
             "auto_sync": "Автосинхронизация текущего аккаунта",
             "auto_sync_desc": "Автоматически синхронизировать информацию о текущем активном аккаунте периодически",
             "sync_interval": "Интервал синхронизации (секунды)"
-        },
-        "warmup": {
-            "title": "Умный разогрев",
-            "desc": "Автоматически отслеживает все модели и запускает разогрев немедленно, когда квота достигает 100%, сохраняя модели в активном состоянии"
         },
         "quota_protection": {
             "title": "Защита квоты",

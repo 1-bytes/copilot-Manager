@@ -23,14 +23,13 @@ mod tests {
     ) -> ProxyToken {
         ProxyToken {
             account_id: account_id.to_string(),
-            access_token: format!("mock_access_token_{}", account_id),
-            refresh_token: format!("mock_refresh_token_{}", account_id),
-            expires_in: 3600,
-            timestamp: chrono::Utc::now().timestamp() + 3600,
+            github_token: format!("mock_github_token_{}", account_id),
+            copilot_token: None,
+            copilot_token_expires_at: 0,
+            account_type: None,
             email: email.to_string(),
             account_path: PathBuf::from(format!("/tmp/test_accounts/{}.json", account_id)),
-            project_id: Some("test-project".to_string()),
-            subscription_tier: Some("PRO".to_string()),
+            copilot_plan: Some("PRO".to_string()),
             remaining_quota,
             protected_models: protected_models.iter().map(|s| s.to_string()).collect(),
             health_score: 1.0,
@@ -65,22 +64,23 @@ mod tests {
             "claude-opus-4-5-thinking 应该归一化为 claude"
         );
 
-        // Gemini 系列
+        // Gemini 系列 - Copilot mode normalizes all Gemini variants to "gemini"
         assert_eq!(
             normalize_to_standard_id("gemini-3-flash"),
-            Some("gemini-3-flash".to_string())
+            Some("gemini".to_string())
         );
         assert_eq!(
             normalize_to_standard_id("gemini-3-pro-high"),
-            Some("gemini-3-pro-high".to_string())
+            Some("gemini".to_string())
         );
         assert_eq!(
             normalize_to_standard_id("gemini-3-pro-low"),
-            Some("gemini-3-pro-high".to_string())
+            Some("gemini".to_string())
         );
 
-        // 不支持的模型应返回 None
-        assert_eq!(normalize_to_standard_id("gpt-4"), None);
+        // GPT models now return "gpt" family prefix
+        assert_eq!(normalize_to_standard_id("gpt-4"), Some("gpt".to_string()));
+        // Unknown models still return None
         assert_eq!(normalize_to_standard_id("unknown-model"), None);
     }
 
@@ -149,11 +149,11 @@ mod tests {
             ),
             // 账号 2: 没有被保护
             create_mock_token("account-2", "user2@example.com", vec![], Some(80)),
-            // 账号 3: gemini-3-flash 被保护
+            // 账号 3: gemini 被保护
             create_mock_token(
                 "account-3",
                 "user3@example.com",
-                vec!["gemini-3-flash"],
+                vec!["gemini"],
                 Some(30),
             ),
         ];
@@ -262,8 +262,8 @@ mod tests {
             threshold_percentage: 60,
             monitored_models: vec![
                 "claude".to_string(),
-                "gemini-3-pro-high".to_string(),
-                "gemini-3-flash".to_string(),
+                "gemini".to_string(),
+                "gpt".to_string(),
             ],
         };
 
@@ -272,11 +272,11 @@ mod tests {
             ("claude-opus-4-5-thinking", true),   // 归一化为 claude
             ("claude-thinking", true), // 归一化为 claude
             ("claude", true),          // 直接匹配
-            ("gemini-3-pro-high", true),          // 直接匹配
-            ("gemini-3-pro-low", true),           // 归一化为 gemini-3-pro-high
-            ("gemini-3-flash", true),             // 直接匹配
-            ("gpt-4", false),                     // 不支持的模型
-            ("gemini-2.5-flash", true),           // 在监控列表中 (归一化为 gemini-3-flash)
+            ("gemini-3-pro-high", true),          // 归一化为 gemini
+            ("gemini-3-pro-low", true),           // 归一化为 gemini
+            ("gemini-3-flash", true),             // 归一化为 gemini
+            ("gpt-4", true),                      // 归一化为 gpt
+            ("gemini-2.5-flash", true),           // 归一化为 gemini
         ];
 
         for (model_name, expected_monitored) in test_cases {
@@ -463,7 +463,7 @@ mod tests {
             threshold_percentage: 60,
             monitored_models: vec![
                 "claude".to_string(),
-                "gemini-3-flash".to_string(),
+                "gemini".to_string(),
             ],
         };
 
@@ -482,14 +482,14 @@ mod tests {
             create_mock_token(
                 "account-c",
                 "c@example.com",
-                vec!["claude", "gemini-3-flash"],
+                vec!["claude", "gemini"],
                 Some(30),
             ),
             // 账号 D: 只有 Gemini 被保护
             create_mock_token(
                 "account-d",
                 "d@example.com",
-                vec!["gemini-3-flash"],
+                vec!["gemini"],
                 Some(40),
             ),
         ];
@@ -586,7 +586,7 @@ mod tests {
         );
         assert_eq!(
             normalize_to_standard_id("GEMINI-3-FLASH"),
-            Some("gemini-3-flash".to_string())
+            Some("gemini".to_string())
         );
     }
 
@@ -933,7 +933,7 @@ mod tests {
                 "models": [
                     { "name": "claude", "percentage": 60 },
                     { "name": "claude-opus-4-5-thinking", "percentage": 40 },
-                    { "name": "gemini-3-flash", "percentage": 100 }
+                    { "name": "gemini", "percentage": 100 }
                 ]
             }
         });
@@ -955,13 +955,13 @@ mod tests {
             "claude 应该返回 60%，而非 max(100%)"
         );
 
-        // 测试读取 gemini-3-flash 的 quota
+        // 测试读取 gemini 的 quota
         let gemini_quota =
             crate::proxy::token_manager::TokenManager::get_model_quota_from_json_for_test(
                 &account_path,
-                "gemini-3-flash",
+                "gemini",
             );
-        assert_eq!(gemini_quota, Some(100), "gemini-3-flash 应该返回 100%");
+        assert_eq!(gemini_quota, Some(100), "gemini 应该返回 100%");
 
         // 测试读取不存在的模型
         let unknown_quota =
@@ -992,7 +992,7 @@ mod tests {
             "quota": {
                 "models": [
                     { "name": "claude", "percentage": 40 },
-                    { "name": "gemini-3-flash", "percentage": 100 }
+                    { "name": "gemini", "percentage": 100 }
                 ]
             }
         });
@@ -1003,7 +1003,7 @@ mod tests {
             "quota": {
                 "models": [
                     { "name": "claude", "percentage": 100 },
-                    { "name": "gemini-3-flash", "percentage": 100 }
+                    { "name": "gemini", "percentage": 100 }
                 ]
             }
         });
@@ -1014,7 +1014,7 @@ mod tests {
             "quota": {
                 "models": [
                     { "name": "claude", "percentage": 60 },
-                    { "name": "gemini-3-flash", "percentage": 100 }
+                    { "name": "gemini", "percentage": 100 }
                 ]
             }
         });
@@ -1084,7 +1084,7 @@ mod tests {
             "quota": {
                 "models": [
                     { "name": "claude", "percentage": 75 },
-                    { "name": "gemini-3-flash", "percentage": 90 }
+                    { "name": "gemini", "percentage": 90 }
                 ]
             }
         });
@@ -1126,14 +1126,13 @@ mod tests {
     ) -> ProxyToken {
         ProxyToken {
             account_id: account_id.to_string(),
-            access_token: format!("mock_access_token_{}", account_id),
-            refresh_token: format!("mock_refresh_token_{}", account_id),
-            expires_in: 3600,
-            timestamp: chrono::Utc::now().timestamp() + 3600,
+            github_token: format!("mock_github_token_{}", account_id),
+            copilot_token: None,
+            copilot_token_expires_at: 0,
+            account_type: None,
             email: email.to_string(),
             account_path,
-            project_id: Some("test-project".to_string()),
-            subscription_tier: Some("PRO".to_string()),
+            copilot_plan: Some("PRO".to_string()),
             remaining_quota,
             protected_models: protected_models.iter().map(|s| s.to_string()).collect(),
             health_score: 1.0,

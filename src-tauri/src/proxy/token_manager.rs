@@ -19,14 +19,13 @@ enum OnDiskAccountState {
 #[derive(Debug, Clone)]
 pub struct ProxyToken {
     pub account_id: String,
-    pub access_token: String,
-    pub refresh_token: String,
-    pub expires_in: i64,
-    pub timestamp: i64,
+    pub github_token: String,
+    pub copilot_token: Option<String>,
+    pub copilot_token_expires_at: i64,
     pub email: String,
     pub account_path: PathBuf, // 账号文件路径，用于更新
-    pub project_id: Option<String>,
-    pub subscription_tier: Option<String>, // "FREE" | "PRO" | "ULTRA"
+    pub copilot_plan: Option<String>,     // "individual" | "business" | "enterprise"
+    pub account_type: Option<String>,     // inferred from SKU
     pub remaining_quota: Option<i32>,      // [FIX #563] Remaining quota for priority sorting
     pub protected_models: HashSet<String>, // [NEW #621]
     pub health_score: f32,                 // [NEW] 健康分数 (0.0 - 1.0)
@@ -435,31 +434,29 @@ impl TokenManager {
         let token_obj = account["token"].as_object()
             .ok_or("缺少 token 字段")?;
 
-        let access_token = token_obj["access_token"].as_str()
-            .ok_or("缺少 access_token")?
+        let github_token = token_obj["github_token"].as_str()
+            .ok_or("缺少 github_token")?
             .to_string();
 
-        let refresh_token = token_obj["refresh_token"].as_str()
-            .ok_or("缺少 refresh_token")?
-            .to_string();
-
-        let expires_in = token_obj["expires_in"].as_i64()
-            .ok_or("缺少 expires_in")?;
-
-        let timestamp = token_obj["expiry_timestamp"].as_i64()
-            .ok_or("缺少 expiry_timestamp")?;
-
-        // project_id 是可选的
-        let project_id = token_obj
-            .get("project_id")
+        let copilot_token = token_obj
+            .get("copilot_token")
             .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
 
-        // 【新增】提取订阅等级 (subscription_tier 为 "FREE" | "PRO" | "ULTRA")
-        let subscription_tier = account
-            .get("quota")
-            .and_then(|q| q.get("subscription_tier"))
+        let copilot_token_expires_at = token_obj
+            .get("copilot_token_expires_at")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+
+        // 提取 Copilot 计划 (copilot_plan: "individual" | "business" | "enterprise")
+        let copilot_plan = account
+            .get("copilot_plan")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        // 提取账号类型 (inferred from SKU)
+        let account_type = token_obj
+            .get("account_type")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
@@ -501,14 +498,13 @@ impl TokenManager {
 
         Ok(Some(ProxyToken {
             account_id,
-            access_token,
-            refresh_token,
-            expires_in,
-            timestamp,
+            github_token,
+            copilot_token,
+            copilot_token_expires_at,
             email,
             account_path: path.clone(),
-            project_id,
-            subscription_tier,
+            copilot_plan,
+            account_type,
             remaining_quota,
             protected_models,
             health_score,
@@ -1043,8 +1039,8 @@ impl TokenManager {
                 else { 3 }
             };
 
-            let tier_cmp = tier_priority(&a.subscription_tier)
-                .cmp(&tier_priority(&b.subscription_tier));
+            let tier_cmp = tier_priority(&a.copilot_plan)
+                .cmp(&tier_priority(&b.copilot_plan));
             if tier_cmp != std::cmp::Ordering::Equal {
                 return tier_cmp;
             }
@@ -1175,56 +1171,35 @@ impl TokenManager {
 
                     // 检查 token 是否过期（提前5分钟刷新）
                     let now = chrono::Utc::now().timestamp();
-                    if now >= token.timestamp - 300 {
-                        tracing::debug!("账号 {} 的 token 即将过期，正在刷新...", token.email);
-                        match crate::modules::oauth::refresh_access_token(&token.refresh_token, Some(&token.account_id))
+                    // Auto-refresh copilot_token if expired (within 60 seconds)
+                    if now >= token.copilot_token_expires_at - 60 || token.copilot_token.is_none() {
+                        tracing::debug!("账号 {} 的 copilot_token 即将过期，正在刷新...", token.email);
+                        match crate::modules::oauth::get_copilot_token(&token.github_token, Some(&token.account_id))
                             .await
                         {
-                            Ok(token_response) => {
-                                token.access_token = token_response.access_token.clone();
-                                token.expires_in = token_response.expires_in;
-                                token.timestamp = now + token_response.expires_in;
+                            Ok(copilot_resp) => {
+                                token.copilot_token = copilot_resp.token.clone();
+                                token.copilot_token_expires_at = copilot_resp.expires_at;
 
                                 if let Some(mut entry) = self.tokens.get_mut(&token.account_id) {
-                                    entry.access_token = token.access_token.clone();
-                                    entry.expires_in = token.expires_in;
-                                    entry.timestamp = token.timestamp;
+                                    entry.copilot_token = token.copilot_token.clone();
+                                    entry.copilot_token_expires_at = token.copilot_token_expires_at;
                                 }
                                 let _ = self
-                                    .save_refreshed_token(&token.account_id, &token_response)
+                                    .save_refreshed_copilot_token(&token.account_id, &copilot_resp)
                                     .await;
                             }
                             Err(e) => {
-                                tracing::warn!("Preferred account token refresh failed: {}", e);
+                                tracing::warn!("Preferred account copilot token refresh failed: {}", e);
                                 // 继续使用旧 token，让后续逻辑处理失败
                             }
                         }
                     }
 
-                    // 确保有 project_id (filter empty strings to trigger re-fetch)
-                    let project_id = if let Some(pid) = &token.project_id {
-                        if pid.is_empty() { None } else { Some(pid.clone()) }
-                    } else {
-                        None
-                    };
-                    let project_id = if let Some(pid) = project_id {
-                        pid
-                    } else {
-                        match crate::proxy::project_resolver::fetch_project_id(&token.access_token)
-                            .await
-                        {
-                            Ok(pid) => {
-                                if let Some(mut entry) = self.tokens.get_mut(&token.account_id) {
-                                    entry.project_id = Some(pid.clone());
-                                }
-                                let _ = self.save_project_id(&token.account_id, &pid).await;
-                                pid
-                            }
-                            Err(_) => "bamboo-precept-lgxtn".to_string(), // fallback
-                        }
-                    };
+                    let copilot_token_str = token.copilot_token.clone()
+                        .ok_or_else(|| format!("No copilot_token available for {}", token.email))?;
 
-                    return Ok((token.access_token, project_id, token.email, token.account_id, 0));
+                    return Ok((copilot_token_str, String::new(), token.email, token.account_id, 0));
                 } else {
                     if is_rate_limited {
                         tracing::warn!("🔒 [FIX #820] Preferred account {} is rate-limited, falling back to round-robin", preferred_token.email);
@@ -1508,53 +1483,51 @@ impl TokenManager {
                 OnDiskAccountState::Enabled => {}
             }
 
-            // 3. 检查 token 是否过期（提前5分钟刷新）
+            // 3. 检查 copilot_token 是否过期（提前60秒刷新）
             let now = chrono::Utc::now().timestamp();
-            if now >= token.timestamp - 300 {
-                tracing::debug!("账号 {} 的 token 即将过期，正在刷新...", token.email);
+            if now >= token.copilot_token_expires_at - 60 || token.copilot_token.is_none() {
+                tracing::debug!("账号 {} 的 copilot_token 即将过期，正在刷新...", token.email);
 
-                // 调用 OAuth 刷新 token
-                match crate::modules::oauth::refresh_access_token(&token.refresh_token, Some(&token.account_id)).await {
-                    Ok(token_response) => {
-                        tracing::debug!("Token 刷新成功！");
+                // 调用 Copilot Token API 刷新
+                match crate::modules::oauth::get_copilot_token(&token.github_token, Some(&token.account_id)).await {
+                    Ok(copilot_resp) => {
+                        tracing::debug!("Copilot token 刷新成功！");
 
                         // 更新本地内存对象供后续使用
-                        token.access_token = token_response.access_token.clone();
-                        token.expires_in = token_response.expires_in;
-                        token.timestamp = now + token_response.expires_in;
+                        token.copilot_token = copilot_resp.token.clone();
+                        token.copilot_token_expires_at = copilot_resp.expires_at;
 
                         // 同步更新跨线程共享的 DashMap
                         if let Some(mut entry) = self.tokens.get_mut(&token.account_id) {
-                            entry.access_token = token.access_token.clone();
-                            entry.expires_in = token.expires_in;
-                            entry.timestamp = token.timestamp;
+                            entry.copilot_token = token.copilot_token.clone();
+                            entry.copilot_token_expires_at = token.copilot_token_expires_at;
                         }
 
-                        // 同步落盘（避免重启后继续使用过期 timestamp 导致频繁刷新）
+                        // 同步落盘（避免重启后继续使用过期 token）
                         if let Err(e) = self
-                            .save_refreshed_token(&token.account_id, &token_response)
+                            .save_refreshed_copilot_token(&token.account_id, &copilot_resp)
                             .await
                         {
-                            tracing::debug!("保存刷新后的 token 失败 ({}): {}", token.email, e);
+                            tracing::debug!("保存刷新后的 copilot_token 失败 ({}): {}", token.email, e);
                         }
                     }
                     Err(e) => {
-                        tracing::error!("Token 刷新失败 ({}): {}，尝试下一个账号", token.email, e);
-                        if e.contains("\"invalid_grant\"") || e.contains("invalid_grant") {
+                        tracing::error!("Copilot token 刷新失败 ({}): {}，尝试下一个账号", token.email, e);
+                        if e.contains("401") || e.contains("403") {
                             tracing::error!(
-                                "Disabling account due to invalid_grant ({}): refresh_token likely revoked/expired",
+                                "Disabling account due to auth failure ({}): github_token likely revoked/expired",
                                 token.email
                             );
                             let _ = self
                                 .disable_account(
                                     &token.account_id,
-                                    &format!("invalid_grant: {}", e),
+                                    &format!("copilot_token_refresh_failed: {}", e),
                                 )
                                 .await;
                             self.tokens.remove(&token.account_id);
                         }
                         // Avoid leaking account emails to API clients; details are still in logs.
-                        last_error = Some(format!("Token refresh failed: {}", e));
+                        last_error = Some(format!("Copilot token refresh failed: {}", e));
                         attempted.insert(token.account_id.clone());
 
                         // 【优化】标记需要清除锁定，避免在循环内加锁
@@ -1571,32 +1544,13 @@ impl TokenManager {
                 }
             }
 
-            // 4. 确保有 project_id (filter empty strings to trigger re-fetch)
-            let project_id = if let Some(pid) = &token.project_id {
-                if pid.is_empty() { None } else { Some(pid.clone()) }
-            } else {
-                None
-            };
-            let project_id = if let Some(pid) = project_id {
-                pid
-            } else {
-                tracing::debug!("账号 {} 缺少 project_id，尝试获取...", token.email);
-                match crate::proxy::project_resolver::fetch_project_id(&token.access_token).await {
-                    Ok(pid) => {
-                        if let Some(mut entry) = self.tokens.get_mut(&token.account_id) {
-                            entry.project_id = Some(pid.clone());
-                        }
-                        let _ = self.save_project_id(&token.account_id, &pid).await;
-                        pid
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to fetch project_id for {}, using fallback: {}",
-                            token.email, e
-                        );
-                        // [FIX #1794] 为 503 问题提供稳定兜底，不跳过该账号
-                        "bamboo-precept-lgxtn".to_string()
-                    }
+            // 4. 获取 copilot_token 字符串
+            let copilot_token_str = match &token.copilot_token {
+                Some(ct) => ct.clone(),
+                None => {
+                    tracing::warn!("账号 {} 没有可用的 copilot_token", token.email);
+                    attempted.insert(token.account_id.clone());
+                    continue;
                 }
             };
 
@@ -1613,7 +1567,7 @@ impl TokenManager {
                 }
             }
 
-            return Ok((token.access_token, project_id, token.email, token.account_id, 0));
+            return Ok((copilot_token_str, String::new(), token.email, token.account_id, 0));
         }
 
         Err(last_error.unwrap_or_else(|| "All accounts failed".to_string()))
@@ -1648,8 +1602,8 @@ impl TokenManager {
         Ok(())
     }
 
-    /// 保存 project_id 到账号文件
-    async fn save_project_id(&self, account_id: &str, project_id: &str) -> Result<(), String> {
+    /// 保存刷新后的 copilot_token 到账号文件
+    async fn save_refreshed_copilot_token(&self, account_id: &str, copilot_resp: &crate::modules::oauth::CopilotTokenResponse) -> Result<(), String> {
         let entry = self.tokens.get(account_id)
             .ok_or("账号不存在")?;
 
@@ -1659,36 +1613,40 @@ impl TokenManager {
             &std::fs::read_to_string(path).map_err(|e| format!("读取文件失败: {}", e))?
         ).map_err(|e| format!("解析 JSON 失败: {}", e))?;
 
-        content["token"]["project_id"] = serde_json::Value::String(project_id.to_string());
+        if let Some(token_str) = &copilot_resp.token {
+            content["token"]["copilot_token"] = serde_json::Value::String(token_str.clone());
+        }
+        content["token"]["copilot_token_expires_at"] = serde_json::Value::Number(copilot_resp.expires_at.into());
 
         std::fs::write(path, serde_json::to_string_pretty(&content).unwrap())
             .map_err(|e| format!("写入文件失败: {}", e))?;
 
-        tracing::debug!("已保存 project_id 到账号 {}", account_id);
+        tracing::debug!("已保存刷新后的 copilot_token 到账号 {}", account_id);
         Ok(())
     }
 
-    /// 保存刷新后的 token 到账号文件
-    async fn save_refreshed_token(&self, account_id: &str, token_response: &crate::modules::oauth::TokenResponse) -> Result<(), String> {
-        let entry = self.tokens.get(account_id)
-            .ok_or("账号不存在")?;
+    /// Refresh the copilot token for a specific account.
+    /// Fetches a new short-lived copilot token using the long-lived github_token,
+    /// updates both in-memory cache and on-disk storage.
+    pub async fn refresh_copilot_token(&self, account_id: &str) -> Result<(), String> {
+        let github_token = self.tokens.get(account_id)
+            .map(|e| e.github_token.clone())
+            .ok_or_else(|| format!("Account {} not found in token pool", account_id))?;
 
-        let path = &entry.account_path;
+        let copilot_resp = crate::modules::oauth::get_copilot_token(&github_token, Some(account_id))
+            .await
+            .map_err(|e| format!("Failed to refresh copilot token for {}: {}", account_id, e))?;
 
-        let mut content: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(path).map_err(|e| format!("读取文件失败: {}", e))?
-        ).map_err(|e| format!("解析 JSON 失败: {}", e))?;
+        // Update in-memory cache
+        if let Some(mut entry) = self.tokens.get_mut(account_id) {
+            entry.copilot_token = copilot_resp.token.clone();
+            entry.copilot_token_expires_at = copilot_resp.expires_at;
+        }
 
-        let now = chrono::Utc::now().timestamp();
+        // Persist to disk
+        self.save_refreshed_copilot_token(account_id, &copilot_resp).await?;
 
-        content["token"]["access_token"] = serde_json::Value::String(token_response.access_token.clone());
-        content["token"]["expires_in"] = serde_json::Value::Number(token_response.expires_in.into());
-        content["token"]["expiry_timestamp"] = serde_json::Value::Number((now + token_response.expires_in).into());
-
-        std::fs::write(path, serde_json::to_string_pretty(&content).unwrap())
-            .map_err(|e| format!("写入文件失败: {}", e))?;
-
-        tracing::debug!("已保存刷新后的 token 到账号 {}", account_id);
+        tracing::info!("Successfully refreshed copilot token for account {}", account_id);
         Ok(())
     }
 
@@ -1697,7 +1655,7 @@ impl TokenManager {
     }
 
     /// 通过 email 获取指定账号的 Token（用于预热等需要指定账号的场景）
-    /// 此方法会自动刷新过期的 token
+    /// 此方法会自动刷新过期的 copilot_token
     pub async fn get_token_by_email(
         &self,
         email: &str,
@@ -1710,12 +1668,9 @@ impl TokenManager {
                 if token.email == email {
                     found = Some((
                         token.account_id.clone(),
-                        token.access_token.clone(),
-                        token.refresh_token.clone(),
-                        token.timestamp,
-                        token.expires_in,
-                        chrono::Utc::now().timestamp(),
-                        token.project_id.clone(),
+                        token.github_token.clone(),
+                        token.copilot_token.clone(),
+                        token.copilot_token_expires_at,
                     ));
                     break;
                 }
@@ -1725,56 +1680,52 @@ impl TokenManager {
 
         let (
             account_id,
-            current_access_token,
-            refresh_token,
-            timestamp,
-            expires_in,
-            now,
-            project_id_opt,
+            github_token,
+            copilot_token_opt,
+            copilot_token_expires_at,
         ) = match token_info {
             Some(info) => info,
             None => return Err(format!("未找到账号: {}", email)),
         };
 
-        let project_id = project_id_opt
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "bamboo-precept-lgxtn".to_string());
+        let now = chrono::Utc::now().timestamp();
 
-        // 检查是否过期 (提前5分钟)
-        if now < timestamp + expires_in - 300 {
-            return Ok((current_access_token, project_id, email.to_string(), account_id, 0));
+        // 检查 copilot_token 是否过期（提前60秒刷新）
+        if copilot_token_opt.is_some() && now < copilot_token_expires_at - 60 {
+            return Ok((copilot_token_opt.unwrap(), email.to_string(), account_id, String::new(), 0));
         }
 
-        tracing::info!("[Warmup] Token for {} is expiring, refreshing...", email);
+        tracing::info!("[Warmup] Copilot token for {} is expiring, refreshing...", email);
 
-        // 调用 OAuth 刷新 token
-        match crate::modules::oauth::refresh_access_token(&refresh_token, Some(&account_id)).await {
-            Ok(token_response) => {
-                tracing::info!("[Warmup] Token refresh successful for {}", email);
-                let new_now = chrono::Utc::now().timestamp();
+        // 调用 Copilot Token API 刷新
+        match crate::modules::oauth::get_copilot_token(&github_token, Some(&account_id)).await {
+            Ok(copilot_resp) => {
+                tracing::info!("[Warmup] Copilot token refresh successful for {}", email);
 
                 // 更新缓存
                 if let Some(mut entry) = self.tokens.get_mut(&account_id) {
-                    entry.access_token = token_response.access_token.clone();
-                    entry.expires_in = token_response.expires_in;
-                    entry.timestamp = new_now;
+                    entry.copilot_token = copilot_resp.token.clone();
+                    entry.copilot_token_expires_at = copilot_resp.expires_at;
                 }
 
                 // 保存到磁盘
                 let _ = self
-                    .save_refreshed_token(&account_id, &token_response)
+                    .save_refreshed_copilot_token(&account_id, &copilot_resp)
                     .await;
 
+                let token_str = copilot_resp.token
+                    .ok_or_else(|| format!("Copilot token response missing token for {}", email))?;
+
                 Ok((
-                    token_response.access_token,
-                    project_id,
+                    token_str,
                     email.to_string(),
                     account_id,
+                    String::new(),
                     0,
                 ))
             }
             Err(e) => Err(format!(
-                "[Warmup] Token refresh failed for {}: {}",
+                "[Warmup] Copilot token refresh failed for {}: {}",
                 email, e
             )),
         }
@@ -1869,9 +1820,9 @@ impl TokenManager {
         self.rate_limit_tracker.mark_success(account_id);
     }
 
-    /// 检查是否有可用的 Google 账号
+    /// 检查是否有可用的 Copilot 账号
     ///
-    /// 用于"仅兜底"模式的智能判断:当所有 Google 账号不可用时才使用外部提供商。
+    /// 用于"仅兜底"模式的智能判断:当所有 Copilot 账号不可用时才使用外部提供商。
     ///
     /// # 参数
     /// - `quota_group`: 配额组("claude" 或 "gemini"),暂未使用但保留用于未来扩展
@@ -1929,7 +1880,7 @@ impl TokenManager {
 
         // 所有账号都不可用
         tracing::info!(
-            "[Fallback Check] No available Google accounts for model {}, fallback should be triggered",
+            "[Fallback Check] No available Copilot accounts for model {}, fallback should be triggered",
             target_model
         );
         false
@@ -1995,14 +1946,14 @@ impl TokenManager {
         reason: crate::proxy::rate_limit::RateLimitReason,
         model: Option<String>,
     ) -> bool {
-        // 1. 从 tokens 中获取该账号的 access_token 和 account_id
+        // 1. 从 tokens 中获取该账号的 github_token 和 account_id
         // 同时获取 account_id，确保锁定 key 与检查 key 一致
-        let (access_token, account_id) = {
+        let (github_token, account_id) = {
             let mut found: Option<(String, String)> = None;
             for entry in self.tokens.iter() {
                 if entry.value().email == email {
                     found = Some((
-                        entry.value().access_token.clone(),
+                        entry.value().github_token.clone(),
                         entry.value().account_id.clone(),
                     ));
                     break;
@@ -2011,17 +1962,17 @@ impl TokenManager {
             found
         }.unzip();
 
-        let (access_token, account_id) = match (access_token, account_id) {
+        let (github_token, account_id) = match (github_token, account_id) {
             (Some(token), Some(id)) => (token, id),
             _ => {
-                tracing::warn!("无法找到账号 {} 的 access_token,无法实时刷新配额", email);
+                tracing::warn!("无法找到账号 {} 的 github_token,无法实时刷新配额", email);
                 return false;
             }
         };
 
         // 2. 调用配额刷新 API
         tracing::info!("账号 {} 正在实时刷新配额...", email);
-        match crate::modules::quota::fetch_quota(&access_token, email, Some(&account_id)).await {
+        match crate::modules::quota::fetch_quota(&github_token, email, Some(&account_id)).await {
             Ok((quota_data, _project_id)) => {
                 // 3. 从最新配额中提取 reset_time
                 let earliest_reset = quota_data
@@ -2221,58 +2172,30 @@ impl TokenManager {
         self.preferred_account_id.read().await.clone()
     }
 
-    /// 使用 Authorization Code 交换 Refresh Token (Web OAuth)
-    pub async fn exchange_code(&self, code: &str, redirect_uri: &str) -> Result<String, String> {
-        crate::modules::oauth::exchange_code(code, redirect_uri)
-            .await
-            .and_then(|t| {
-                t.refresh_token
-                    .ok_or_else(|| "No refresh token returned by Google".to_string())
-            })
-    }
-
-    /// 获取 OAuth URL (支持自定义 Redirect URI)
-    pub fn get_oauth_url_with_redirect(&self, redirect_uri: &str, state: &str) -> String {
-        crate::modules::oauth::get_auth_url(redirect_uri, state)
-    }
-
-    /// 获取用户信息 (Email 等)
+    /// 获取 GitHub 用户信息 (Email、Login 等)
     pub async fn get_user_info(
         &self,
-        refresh_token: &str,
-    ) -> Result<crate::modules::oauth::UserInfo, String> {
-        // 先获取 Access Token
-        let token = crate::modules::oauth::refresh_access_token(refresh_token, None)
-            .await
-            .map_err(|e| format!("刷新 Access Token 失败: {}", e))?;
-
-        crate::modules::oauth::get_user_info(&token.access_token, None).await
+        github_token: &str,
+    ) -> Result<crate::modules::oauth::GitHubUser, String> {
+        crate::modules::oauth::get_github_user(github_token, None).await
     }
 
     /// 添加新账号 (纯后端实现，不依赖 Tauri AppHandle)
-    pub async fn add_account(&self, email: &str, refresh_token: &str) -> Result<(), String> {
-        // 1. 获取 Access Token (验证 refresh_token 有效性)
-        let token_info = crate::modules::oauth::refresh_access_token(refresh_token, None)
+    pub async fn add_account(&self, email: &str, github_token: &str) -> Result<(), String> {
+        // 1. 验证 github_token 有效性 (尝试获取 Copilot Token)
+        let copilot_resp = crate::modules::oauth::get_copilot_token(github_token, None)
             .await
-            .map_err(|e| format!("Invalid refresh token: {}", e))?;
+            .map_err(|e| format!("Invalid GitHub token: {}", e))?;
 
-        // 2. 获取项目 ID (Project ID)
-        let project_id = crate::proxy::project_resolver::fetch_project_id(&token_info.access_token)
-            .await
-            .unwrap_or_else(|_| "bamboo-precept-lgxtn".to_string()); // Fallback
-
-        // 3. 委托给 modules::account::add_account 处理 (包含文件写入、索引更新、锁)
+        // 2. 委托给 modules::account::add_account 处理 (包含文件写入、索引更新、锁)
         let email_clone = email.to_string();
-        let refresh_token_clone = refresh_token.to_string();
+        let github_token_clone = github_token.to_string();
 
         tokio::task::spawn_blocking(move || {
             let token_data = crate::models::TokenData::new(
-                token_info.access_token,
-                refresh_token_clone,
-                token_info.expires_in,
-                Some(email_clone.clone()),
-                Some(project_id),
-                None, // session_id
+                github_token_clone,
+                copilot_resp.token,
+                copilot_resp.expires_at,
             );
 
             crate::modules::account::upsert_account(email_clone, None, token_data)
@@ -2281,7 +2204,7 @@ impl TokenManager {
         .map_err(|e| format!("Task join error: {}", e))?
         .map_err(|e| format!("Failed to save account: {}", e))?;
 
-        // 4. 重新加载 (更新内存)
+        // 3. 重新加载 (更新内存)
         self.reload_all_accounts().await.map(|_| ())
     }
 
@@ -2494,10 +2417,9 @@ mod tests {
             "id": account_id,
             "email": email,
             "token": {
-                "access_token": "atk",
-                "refresh_token": "rtk",
-                "expires_in": 3600,
-                "expiry_timestamp": now + 3600
+                "github_token": "ghu_test_token",
+                "copilot_token": "test_copilot_token",
+                "copilot_token_expires_at": now + 1800
             },
             "disabled": false,
             "proxy_disabled": false,
@@ -2552,11 +2474,15 @@ mod tests {
                 "id": id,
                 "email": email,
                 "token": {
-                    "access_token": format!("atk-{}", id),
-                    "refresh_token": format!("rtk-{}", id),
-                    "expires_in": 3600,
-                    "expiry_timestamp": now + 3600,
-                    "project_id": format!("pid-{}", id)
+                    "github_token": format!("ghu_{}", id),
+                    "copilot_token": format!("copilot_{}", id),
+                    "copilot_token_expires_at": now + 1800
+                },
+                "quota": {
+                    "models": [
+                        { "name": "gemini", "percentage": 100 },
+                        { "name": "claude", "percentage": 100 }
+                    ]
                 },
                 "disabled": false,
                 "proxy_disabled": proxy_disabled,
@@ -2611,11 +2537,9 @@ mod tests {
                 "id": id,
                 "email": email,
                 "token": {
-                    "access_token": format!("atk-{}", id),
-                    "refresh_token": format!("rtk-{}", id),
-                    "expires_in": 3600,
-                    "expiry_timestamp": now + 3600,
-                    "project_id": format!("pid-{}", id)
+                    "github_token": format!("ghu_{}", id),
+                    "copilot_token": format!("copilot_{}", id),
+                    "copilot_token_expires_at": now + 1800
                 },
                 "quota": {
                     "models": [
@@ -2679,14 +2603,13 @@ mod tests {
     ) -> ProxyToken {
         ProxyToken {
             account_id: email.to_string(),
-            access_token: "test_token".to_string(),
-            refresh_token: "test_refresh".to_string(),
-            expires_in: 3600,
-            timestamp: chrono::Utc::now().timestamp() + 3600,
+            github_token: "test_github_token".to_string(),
+            copilot_token: Some("test_copilot_token".to_string()),
+            copilot_token_expires_at: chrono::Utc::now().timestamp() + 1800,
             email: email.to_string(),
             account_path: PathBuf::from("/tmp/test"),
-            project_id: None,
-            subscription_tier: tier.map(|s| s.to_string()),
+            copilot_plan: tier.map(|s| s.to_string()),
+            account_type: None,
             remaining_quota,
             protected_models: HashSet::new(),
             health_score,
@@ -2709,8 +2632,8 @@ mod tests {
             else { 3 }
         };
 
-        // First: compare by subscription tier
-        let tier_cmp = tier_priority(&a.subscription_tier).cmp(&tier_priority(&b.subscription_tier));
+        // First: compare by copilot plan tier
+        let tier_cmp = tier_priority(&a.copilot_plan).cmp(&tier_priority(&b.copilot_plan));
         if tier_cmp != Ordering::Equal {
             return tier_cmp;
         }
@@ -2935,14 +2858,13 @@ mod tests {
     ) -> ProxyToken {
         ProxyToken {
             account_id: email.to_string(),
-            access_token: "test_token".to_string(),
-            refresh_token: "test_refresh".to_string(),
-            expires_in: 3600,
-            timestamp: chrono::Utc::now().timestamp() + 3600,
+            github_token: "test_github_token".to_string(),
+            copilot_token: Some("test_copilot_token".to_string()),
+            copilot_token_expires_at: chrono::Utc::now().timestamp() + 1800,
             email: email.to_string(),
             account_path: PathBuf::from("/tmp/test"),
-            project_id: None,
-            subscription_tier: Some("PRO".to_string()),
+            copilot_plan: Some("PRO".to_string()),
+            account_type: None,
             remaining_quota,
             protected_models,
             health_score: 1.0,
@@ -3110,8 +3032,8 @@ mod tests {
 
             // Priority 0: 高端模型时，订阅等级优先
             if requires_ultra {
-                let tier_cmp = tier_priority(&a.subscription_tier)
-                    .cmp(&tier_priority(&b.subscription_tier));
+                let tier_cmp = tier_priority(&a.copilot_plan)
+                    .cmp(&tier_priority(&b.copilot_plan));
                 if tier_cmp != Ordering::Equal {
                     return tier_cmp;
                 }
@@ -3134,8 +3056,8 @@ mod tests {
 
             // Priority 3: Tier (for non-high-end models)
             if !requires_ultra {
-                let tier_cmp = tier_priority(&a.subscription_tier)
-                    .cmp(&tier_priority(&b.subscription_tier));
+                let tier_cmp = tier_priority(&a.copilot_plan)
+                    .cmp(&tier_priority(&b.copilot_plan));
                 if tier_cmp != Ordering::Equal {
                     return tier_cmp;
                 }
@@ -3196,8 +3118,8 @@ mod tests {
             };
 
             if requires_ultra {
-                let tier_cmp = tier_priority(&a.subscription_tier)
-                    .cmp(&tier_priority(&b.subscription_tier));
+                let tier_cmp = tier_priority(&a.copilot_plan)
+                    .cmp(&tier_priority(&b.copilot_plan));
                 if tier_cmp != Ordering::Equal {
                     return tier_cmp;
                 }
@@ -3239,8 +3161,8 @@ mod tests {
                 };
 
                 if requires_ultra {
-                    let tier_cmp = tier_priority(&a.subscription_tier)
-                        .cmp(&tier_priority(&b.subscription_tier));
+                    let tier_cmp = tier_priority(&a.copilot_plan)
+                        .cmp(&tier_priority(&b.copilot_plan));
                     if tier_cmp != Ordering::Equal {
                         return tier_cmp;
                     }
@@ -3254,8 +3176,8 @@ mod tests {
                 }
 
                 if !requires_ultra {
-                    let tier_cmp = tier_priority(&a.subscription_tier)
-                        .cmp(&tier_priority(&b.subscription_tier));
+                    let tier_cmp = tier_priority(&a.copilot_plan)
+                        .cmp(&tier_priority(&b.copilot_plan));
                     if tier_cmp != Ordering::Equal {
                         return tier_cmp;
                     }

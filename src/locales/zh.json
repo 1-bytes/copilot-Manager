@@ -154,50 +154,7 @@
         "reset_time": "重置时间",
         "switch_to": "切换到此账号",
         "actions": "操作",
-        "device_fingerprint": "设备指纹",
         "show_all_quotas": "显示所有配额",
-        "device_fingerprint_dialog": {
-            "title": "设备指纹",
-            "operations": "设备指纹操作",
-            "generate_and_bind": "生成并绑定",
-            "restore_original": "恢复原始",
-            "open_storage_directory": "打开存储目录",
-            "current_storage": "当前存储",
-            "effective": "已生效",
-            "current_storage_desc": "读取自 storage.json（切换账号时应用绑定后更新）",
-            "account_binding": "账号绑定",
-            "pending_application": "待应用",
-            "account_binding_desc": "生成/恢复后保存为绑定，切换账号时写入 storage.json",
-            "historical_fingerprints": "历史指纹（可选恢复/删除）",
-            "no_history": "暂无历史",
-            "current": "当前",
-            "restore": "恢复",
-            "delete_version": "删除此版本",
-            "confirm_generate_title": "确认生成并绑定？",
-            "confirm_generate_desc": "将生成一套新的设备指纹并设置为当前指纹。确认继续？",
-            "confirm_restore_title": "确认恢复原始指纹？",
-            "confirm_restore_desc": "将恢复为原始指纹并覆盖当前指纹。确认继续？",
-            "cancel": "取消",
-            "confirm": "确认",
-            "processing": "处理中...",
-            "loading": "加载中...",
-            "failed_to_load_device_info": "加载设备信息失败",
-            "generation_failed": "生成失败",
-            "binding_failed": "绑定失败",
-            "restoration_failed": "恢复失败",
-            "deletion_failed": "删除失败",
-            "directory_open_failed": "无法打开目录",
-            "generated_and_bound": "已生成并绑定",
-            "restored": "已恢复",
-            "deleted": "已删除",
-            "directory_opened": "已打开设备存储目录",
-            "original_fingerprint_not_found": "未找到原始指纹"
-        },
-        "warmup_all": "一键预热",
-        "warmup_selected": "预热 ({{count}})",
-        "warmup_this": "预热该账号",
-        "warmup_now": "立即预热",
-        "warmup_batch_triggered": "已成功为 {{count}} 个账号触发预热任务",
         "quota_protected": "受保护",
         "details": {
             "title": "配额详情",
@@ -211,13 +168,13 @@
         "add": {
             "title": "添加新账号",
             "tabs": {
-                "oauth": "OAuth 授权",
-                "token": "Refresh Token",
-                "import": "从数据库导入"
+                "oauth": "GitHub 登录",
+                "token": "GitHub 令牌",
+                "import": "导入"
             },
             "oauth": {
                 "recommend": "推荐方式",
-                "desc": "将打开默认浏览器进行 Google 登录授权，自动获取并保存 Token。",
+                "desc": "通过 GitHub 设备流登录。将显示一个代码，需在 GitHub 上输入。",
                 "btn_start": "开始 OAuth 授权",
                 "btn_waiting": "正在等待授权...",
                 "btn_finish": "我已授权，继续",
@@ -235,8 +192,8 @@
                 "manual_submitted": "认证码已提交，后台处理中..."
             },
             "token": {
-                "label": "Refresh Token",
-                "placeholder": "在此处粘贴您的 Refresh Token (支持批量)\n\n支持格式:\n1. 单个 Token (1//...)\n2. JSON 数组 (含 refresh_token 字段)\n3. 任意包含 Token 的文本 (自动提取)",
+                "label": "GitHub 令牌",
+                "placeholder": "在此粘贴您的 GitHub 个人访问令牌 (ghp_...)",
                 "hint": "提示: 支持一次性粘贴多个 Token 或 JSON 数组，系统将自动识别并批量导入。",
                 "error_token": "请填写 Refresh Token",
                 "batch_progress": "正在导入第 {{current}}/{{total}} 个账户...",
@@ -245,13 +202,13 @@
                 "batch_fail": "导入失败"
             },
             "import": {
-                "scheme_a": "方案 A: 从当前 IDE 数据库",
-                "scheme_a_desc": "自动从本地 Antigravity 数据库读取当前登录的账号信息。",
-                "btn_db": "导入当前登录账号",
+                "scheme_a": "方案 A: 直接导入",
+                "scheme_a_desc": "从本地配置文件导入账号信息。",
+                "btn_db": "导入账号",
                 "or": "或者",
-                "scheme_b": "方案 B: 从 V1 版本备份",
-                "scheme_b_desc": "扫描 ~/.antigravity-agent 目录，批量导入旧版本的账号数据。",
-                "btn_v1": "从 V1 备份批量导入",
+                "scheme_b": "方案 B: 从备份导入",
+                "scheme_b_desc": "扫描备份数据，批量导入账号。",
+                "btn_v1": "批量导入",
                 "btn_custom_db": "从自定义 DB 导入"
             },
             "btn_cancel": "取消",
@@ -259,6 +216,17 @@
             "oauth_error": "OAuth 授权失败: {{error}}",
             "status": {
                 "error_token": "请填写 Refresh Token"
+            },
+            "device_flow": {
+                "title": "GitHub 设备流登录",
+                "start": "开始 GitHub 登录",
+                "code_label": "请在 GitHub 上输入此代码：",
+                "open_github": "打开 GitHub",
+                "waiting": "等待授权中...",
+                "expires_in": "{{time}} 后过期",
+                "success": "授权成功！",
+                "expired": "验证码已过期，请重试。",
+                "cancelled": "登录已取消。"
             }
         },
         "table": {
@@ -334,10 +302,6 @@
             "auto_sync": "自动获取当前账号",
             "auto_sync_desc": "定期自动刷新当前活动账号的信息",
             "sync_interval": "同步间隔（分钟）"
-        },
-        "warmup": {
-            "title": "智能预热",
-            "desc": "自动监控所有模型，当额度恢复到 100% 时立即触发预热，保持模型热状态"
         },
         "quota_protection": {
             "title": "配额保护",

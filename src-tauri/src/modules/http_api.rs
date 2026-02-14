@@ -9,7 +9,6 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
-// 预留 HTTP API 模块，当前未在主流程中启用
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -117,7 +116,6 @@ struct AccountResponse {
     is_current: bool,
     disabled: bool,
     quota: Option<QuotaResponse>,
-    device_bound: bool,
     last_used: i64,
 }
 
@@ -125,7 +123,7 @@ struct AccountResponse {
 struct QuotaResponse {
     models: Vec<ModelQuota>,
     updated_at: Option<i64>,
-    subscription_tier: Option<String>,
+    plan: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -160,21 +158,6 @@ struct RefreshResponse {
 }
 
 #[derive(Serialize)]
-struct BindDeviceResponse {
-    success: bool,
-    message: String,
-    device_profile: Option<DeviceProfileResponse>,
-}
-
-#[derive(Serialize)]
-struct DeviceProfileResponse {
-    machine_id: String,
-    mac_machine_id: String,
-    dev_device_id: String,
-    sqm_id: String,
-}
-
-#[derive(Serialize)]
 struct ErrorResponse {
     error: String,
 }
@@ -192,16 +175,6 @@ struct LogsResponse {
 #[derive(Deserialize)]
 struct SwitchRequest {
     account_id: String,
-}
-
-#[derive(Deserialize)]
-struct BindDeviceRequest {
-    #[serde(default = "default_bind_mode")]
-    mode: String,
-}
-
-fn default_bind_mode() -> String {
-    "generate".to_string()
 }
 
 #[derive(Deserialize)]
@@ -252,7 +225,7 @@ async fn list_accounts() -> Result<impl IntoResponse, (StatusCode, Json<ErrorRes
                     reset_time: m.reset_time,
                 }).collect(),
                 updated_at: Some(q.last_updated),
-                subscription_tier: q.subscription_tier,
+                plan: q.plan,
             });
             
             AccountResponse {
@@ -262,7 +235,6 @@ async fn list_accounts() -> Result<impl IntoResponse, (StatusCode, Json<ErrorRes
                 is_current,
                 disabled: acc.disabled,
                 quota,
-                device_bound: acc.device_profile.is_some(),
                 last_used: acc.last_used,
             }
         })
@@ -291,7 +263,7 @@ async fn get_current_account() -> Result<impl IntoResponse, (StatusCode, Json<Er
                 reset_time: m.reset_time,
             }).collect(),
             updated_at: Some(q.last_updated),
-            subscription_tier: q.subscription_tier,
+            plan: q.plan,
         });
 
         AccountResponse {
@@ -301,7 +273,6 @@ async fn get_current_account() -> Result<impl IntoResponse, (StatusCode, Json<Er
             is_current: true,
             disabled: acc.disabled,
             quota,
-            device_bound: acc.device_profile.is_some(),
             last_used: acc.last_used,
         }
     });
@@ -393,35 +364,6 @@ async fn refresh_all_quotas() -> Result<impl IntoResponse, (StatusCode, Json<Err
     ))
 }
 
-/// POST /accounts/:id/bind-device - Bind device fingerprint
-async fn bind_device(
-    Path(account_id): Path<String>,
-    Json(payload): Json<BindDeviceRequest>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    logger::log_info(&format!(
-        "[HTTP API] Binding device fingerprint: account={}, mode={}",
-        account_id, payload.mode
-    ));
-
-    let result = account::bind_device_profile(&account_id, &payload.mode).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-
-    Ok(Json(BindDeviceResponse {
-        success: true,
-        message: "Device fingerprint bound successfully".to_string(),
-        device_profile: Some(DeviceProfileResponse {
-            machine_id: result.machine_id,
-            mac_machine_id: result.mac_machine_id,
-            dev_device_id: result.dev_device_id,
-            sqm_id: result.sqm_id,
-        }),
-    }))
-}
-
 /// GET /logs - Get proxy logs
 async fn get_logs(
     Query(params): Query<LogsRequest>,
@@ -460,7 +402,6 @@ pub async fn start_server(port: u16, integration: crate::modules::integration::S
         .route("/accounts/current", get(get_current_account))
         .route("/accounts/switch", post(switch_account))
         .route("/accounts/refresh", post(refresh_all_quotas))
-        .route("/accounts/{id}/bind-device", post(bind_device))
         .route("/logs", get(get_logs))
         .layer(cors)
         .with_state(state);

@@ -7,9 +7,7 @@ use bytes::Bytes;
 use serde_json::{json, Value};
 use tracing::{debug, error, info}; // Import Engine trait for encode method
 
-use crate::proxy::mappers::openai::{
-    transform_openai_request, transform_openai_response, OpenAIRequest,
-};
+use crate::proxy::mappers::openai::OpenAIRequest;
 // use crate::proxy::upstream::client::UpstreamClient; // 通过 state 获取
 use crate::proxy::debug_logger;
 use crate::proxy::server::AppState;
@@ -164,7 +162,7 @@ pub async fn handle_chat_completions(
             &openai_req.model,
             &mapped_model,
             &tools_val,
-            None, // size (not used in handler, transform_openai_request handles it)
+            None, // size
             None, // quality
             None, // image_size
             None, // body
@@ -175,7 +173,7 @@ pub async fn handle_chat_completions(
 
         // 4. 获取 Token (使用准确的 request_type)
         // 关键：在重试尝试 (attempt > 0) 时强制轮换账号
-        let (access_token, project_id, email, account_id, _wait_ms) = match token_manager
+        let (copilot_token, _project_id, email, account_id, _wait_ms) = match token_manager
             .get_token(
                 &config.request_type,
                 attempt > 0,
@@ -200,75 +198,66 @@ pub async fn handle_chat_completions(
         last_email = Some(email.clone());
         info!("✓ Using account: {} (type: {})", email, config.request_type);
 
-        // 4. 转换请求 (返回内容包含 session_id 和 message_count)
-        let (gemini_body, session_id, message_count) =
-            transform_openai_request(&openai_req, &project_id, &mapped_model);
+        // 4. Build Copilot request body (OpenAI format - forward directly, no Gemini transformation)
+        let _session_id = SessionManager::extract_openai_session_id(&openai_req);
+        let _message_count = openai_req.messages.len();
+        let copilot_body = {
+            let mut body = serde_json::to_value(&openai_req).unwrap_or_default();
+            // Set the mapped model name
+            if let Some(obj) = body.as_object_mut() {
+                obj.insert("model".to_string(), json!(mapped_model.clone()));
+                // Always request streaming for better handling
+                obj.insert("stream".to_string(), json!(true));
+            }
+            body
+        };
 
         if debug_logger::is_enabled(&debug_cfg) {
             let payload = json!({
-                "kind": "v1internal_request",
+                "kind": "copilot_request",
                 "protocol": "openai",
                 "trace_id": trace_id,
                 "original_model": openai_req.model,
                 "mapped_model": mapped_model,
                 "request_type": config.request_type,
                 "attempt": attempt,
-                "v1internal_request": gemini_body.clone(),
+                "copilot_request": copilot_body.clone(),
             });
             debug_logger::write_debug_payload(
                 &debug_cfg,
                 Some(&trace_id),
-                "v1internal_request",
+                "copilot_request",
                 &payload,
             )
             .await;
         }
 
-        // [New] 打印转换后的报文 (Gemini Body) 供调试
-        if let Ok(body_json) = serde_json::to_string_pretty(&gemini_body) {
-            debug!("[OpenAI-Request] Transformed Gemini Body:\n{}", body_json);
+        // [New] Debug log for Copilot request body
+        if let Ok(body_json) = serde_json::to_string_pretty(&copilot_body) {
+            debug!("[OpenAI-Request] Copilot Request Body:
+{}", body_json);
         }
 
-        // 5. 发送请求
+        // 5. Send request to Copilot (OpenAI format natively)
         let client_wants_stream = openai_req.stream;
-        let force_stream_internally = !client_wants_stream;
-        let actual_stream = client_wants_stream || force_stream_internally;
 
-        if force_stream_internally {
-            debug!(
-                "[{}] 🔄 Auto-converting non-stream request to stream for better quota",
-                trace_id
-            );
-        }
-
-        let method = if actual_stream {
-            "streamGenerateContent"
+        // Build extra headers if needed
+        let extra_headers_vec: Vec<(String, String)> = Vec::new();
+        let extra_headers_ref: Option<&[(String, String)]> = if extra_headers_vec.is_empty() {
+            None
         } else {
-            "generateContent"
+            Some(&extra_headers_vec)
         };
-        let query_string = if actual_stream { Some("alt=sse") } else { None };
-
-        // [FIX #1522] Inject Anthropic Beta Headers for Claude models (OpenAI path)
-        let mut extra_headers = std::collections::HashMap::new();
-        if mapped_model.to_lowercase().contains("claude") {
-            extra_headers.insert(
-                "anthropic-beta".to_string(),
-                "claude-code-20250219".to_string(),
-            );
-            tracing::debug!(
-                "[{}] Injected Anthropic beta headers for Claude model (via OpenAI)",
-                trace_id
-            );
-        }
 
         let call_result = match upstream
-            .call_v1_internal_with_headers(
-                method,
-                &access_token,
-                gemini_body,
-                query_string,
-                extra_headers.clone(),
+            .call_copilot(
+                "/chat/completions",
+                &copilot_token,
+                Some(&copilot_body),
+                extra_headers_ref,
+                None,
                 Some(account_id.as_str()),
+                reqwest::Method::POST,
             )
             .await
         {
@@ -322,8 +311,8 @@ pub async fn handle_chat_completions(
         let upstream_url = response.url().to_string();
         let status = response.status();
         if status.is_success() {
-            // 5. 处理流式 vs 非流式
-            if actual_stream {
+            // 5. Copilot always returns streaming response (we set stream: true)
+            {
                 use axum::body::Body;
                 use axum::response::Response;
                 use futures::StreamExt;
@@ -338,22 +327,16 @@ pub async fn handle_chat_completions(
                     "status": status.as_u16(),
                     "upstream_url": upstream_url,
                 });
-                let gemini_stream = debug_logger::wrap_reqwest_stream_with_debug(
+                // Copilot returns OpenAI SSE format natively - pass through directly
+                let upstream_stream = debug_logger::wrap_reqwest_stream_with_debug(
                     Box::pin(response.bytes_stream()),
                     debug_cfg.clone(),
                     trace_id.clone(),
                     "upstream_response",
                     meta,
                 );
-
-                // [P1 FIX] Enhanced Peek logic to handle heartbeats and slow start
-                // Pre-read until we find meaningful content, skip heartbeats
-                use crate::proxy::mappers::openai::streaming::create_openai_sse_stream;
-                let mut openai_stream = create_openai_sse_stream(
-                    gemini_stream,
-                    openai_req.model.clone(),
-                    session_id,
-                    message_count,
+                let mut passthrough_stream: std::pin::Pin<Box<dyn futures::Stream<Item = Result<Bytes, String>> + Send>> = Box::pin(
+                    futures::StreamExt::map(upstream_stream, |result| result.map_err(|e| e.to_string()))
                 );
 
                 let mut first_data_chunk = None;
@@ -363,7 +346,7 @@ pub async fn handle_chat_completions(
                 loop {
                     match tokio::time::timeout(
                         std::time::Duration::from_secs(60),
-                        openai_stream.next(),
+                        passthrough_stream.next(),
                     )
                     .await
                     {
@@ -425,7 +408,7 @@ pub async fn handle_chat_completions(
                     futures::stream::once(
                         async move { Ok::<Bytes, String>(first_data_chunk.unwrap()) },
                     )
-                    .chain(openai_stream);
+                    .chain(passthrough_stream);
 
                 if client_wants_stream {
                     // 客户端请求流式，返回 SSE
@@ -470,22 +453,6 @@ pub async fn handle_chat_completions(
                 }
             }
 
-            let gemini_resp: Value = response
-                .json()
-                .await
-                .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Parse error: {}", e)))?;
-
-            let openai_response =
-                transform_openai_response(&gemini_resp, Some(&session_id), message_count);
-            return Ok((
-                StatusCode::OK,
-                [
-                    ("X-Account-Email", email.as_str()),
-                    ("X-Mapped-Model", mapped_model.as_str()),
-                ],
-                Json(openai_response),
-            )
-                .into_response());
         }
 
         // 处理特定错误并重试
@@ -1000,7 +967,7 @@ pub async fn handle_completions(
 
     // [Fix Phase 2] Backport normalization logic from handle_chat_completions
     // Handle "instructions" + "input" (Codex style) -> system + user messages
-    // This is critical because `transform_openai_request` expects `messages` to be populated.
+    // This is critical because the Copilot handler expects `messages` to be populated.
 
     // [FIX] 检查是否已经有 messages (被第一次标准化处理过)
     let has_codex_fields = body.get("instructions").is_some() || body.get("input").is_some();
@@ -1157,7 +1124,7 @@ pub async fn handle_completions(
         // 重试时强制轮换，除非只是简单的网络抖动但 Claude 逻辑里 attempt > 0 总是 force_rotate
         let force_rotate = attempt > 0;
 
-        let (access_token, project_id, email, account_id, _wait_ms) = match token_manager
+        let (copilot_token, _project_id, email, account_id, _wait_ms) = match token_manager
             .get_token(
                 &config.request_type,
                 force_rotate,
@@ -1181,37 +1148,42 @@ pub async fn handle_completions(
 
         info!("✓ Using account: {} (type: {})", email, config.request_type);
 
-        let (gemini_body, session_id, message_count) =
-            transform_openai_request(&openai_req, &project_id, &mapped_model);
+        // 4. Build Copilot request body (OpenAI format - forward directly)
+        let _session_id = session_id_str.clone();
+        let copilot_body = {
+            let mut body = serde_json::to_value(&openai_req).unwrap_or_default();
+            // Set the mapped model name
+            if let Some(obj) = body.as_object_mut() {
+                obj.insert("model".to_string(), json!(mapped_model.clone()));
+                // Always request streaming for Copilot
+                obj.insert("stream".to_string(), json!(true));
+            }
+            body
+        };
 
-        // [New] 打印转换后的报文 (Gemini Body) 供调试 (Codex 路径) ———— 缩减为 simple debug
+        // [New] Debug log for Copilot request body
         debug!(
-            "[Codex-Request] Transformed Gemini Body ({} parts)",
-            gemini_body
-                .get("contents")
+            "[Codex-Request] Copilot request body ({} messages)",
+            copilot_body
+                .get("messages")
                 .and_then(|c| c.as_array())
                 .map(|a| a.len())
                 .unwrap_or(0)
         );
 
-        // [AUTO-CONVERSION] For Legacy/Codex as well
+        // [AUTO-CONVERSION] Always stream with Copilot
         let client_wants_stream = openai_req.stream;
         let force_stream_internally = !client_wants_stream;
-        let list_response = client_wants_stream || force_stream_internally;
-        let method = if list_response {
-            "streamGenerateContent"
-        } else {
-            "generateContent"
-        };
-        let query_string = if list_response { Some("alt=sse") } else { None };
 
         let call_result = match upstream
-            .call_v1_internal(
-                method,
-                &access_token,
-                gemini_body,
-                query_string,
+            .call_copilot(
+                "/chat/completions",
+                &copilot_token,
+                Some(&copilot_body),
+                None,
+                None,
                 Some(account_id.as_str()),
+                reqwest::Method::POST,
             )
             .await
         {
@@ -1234,93 +1206,74 @@ pub async fn handle_completions(
             // [智能限流] 请求成功，重置该账号的连续失败计数
             token_manager.mark_account_success(&email);
 
-            if list_response {
+            if client_wants_stream || force_stream_internally {
                 use axum::body::Body;
                 use axum::response::Response;
                 use futures::StreamExt;
 
-                let gemini_stream = response.bytes_stream();
+                // Copilot returns OpenAI SSE format natively - pass through directly
+                let upstream_stream = response.bytes_stream();
+                let mut passthrough_stream: std::pin::Pin<Box<dyn futures::Stream<Item = Result<Bytes, String>> + Send>> = Box::pin(
+                    upstream_stream.map(|result| result.map_err(|e| e.to_string()))
+                );
 
-                // DECISION: Which stream to create?
-                // If client wants stream: give them what they asked (Legacy/Codex SSE).
-                // If forced stream: use Chat SSE + Collector, because our collector works on Chat format
-                // and we already have logic to convert Chat JSON -> Legacy JSON.
+                // [P1 FIX] Enhanced Peek logic (Reused from above/standard)
+                let mut first_data_chunk = None;
+                let mut retry_this_account = false;
 
-                if client_wants_stream {
-                    let mut openai_stream = if is_codex_style {
-                        use crate::proxy::mappers::openai::streaming::create_codex_sse_stream;
-                        create_codex_sse_stream(
-                            Box::pin(gemini_stream),
-                            openai_req.model.clone(),
-                            session_id,
-                            message_count,
-                        )
-                    } else {
-                        use crate::proxy::mappers::openai::streaming::create_legacy_sse_stream;
-                        create_legacy_sse_stream(
-                            Box::pin(gemini_stream),
-                            openai_req.model.clone(),
-                            session_id,
-                            message_count,
-                        )
-                    };
-
-                    // [P1 FIX] Enhanced Peek logic (Reused from above/standard)
-                    let mut first_data_chunk = None;
-                    let mut retry_this_account = false;
-
-                    loop {
-                        match tokio::time::timeout(
-                            std::time::Duration::from_secs(60),
-                            openai_stream.next(),
-                        )
-                        .await
-                        {
-                            Ok(Some(Ok(bytes))) => {
-                                if bytes.is_empty() {
-                                    continue;
-                                }
-                                let text = String::from_utf8_lossy(&bytes);
-                                if text.trim().starts_with(":")
-                                    || text.trim().starts_with("data: :")
-                                {
-                                    continue;
-                                }
-                                if text.contains("\"error\"") {
-                                    last_error = "Error event during peek".to_string();
-                                    retry_this_account = true;
-                                    break;
-                                }
-                                first_data_chunk = Some(bytes);
-                                break;
+                loop {
+                    match tokio::time::timeout(
+                        std::time::Duration::from_secs(60),
+                        passthrough_stream.next(),
+                    )
+                    .await
+                    {
+                        Ok(Some(Ok(bytes))) => {
+                            if bytes.is_empty() {
+                                continue;
                             }
-                            Ok(Some(Err(e))) => {
-                                last_error = format!("Stream error during peek: {}", e);
+                            let text = String::from_utf8_lossy(&bytes);
+                            if text.trim().starts_with(":")
+                                || text.trim().starts_with("data: :")
+                            {
+                                continue;
+                            }
+                            if text.contains("\"error\"") {
+                                last_error = "Error event during peek".to_string();
                                 retry_this_account = true;
                                 break;
                             }
-                            Ok(None) => {
-                                last_error = "Empty response stream".to_string();
-                                retry_this_account = true;
-                                break;
-                            }
-                            Err(_) => {
-                                last_error = "Timeout waiting for first data".to_string();
-                                retry_this_account = true;
-                                break;
-                            }
+                            first_data_chunk = Some(bytes);
+                            break;
+                        }
+                        Ok(Some(Err(e))) => {
+                            last_error = format!("Stream error during peek: {}", e);
+                            retry_this_account = true;
+                            break;
+                        }
+                        Ok(None) => {
+                            last_error = "Empty response stream".to_string();
+                            retry_this_account = true;
+                            break;
+                        }
+                        Err(_) => {
+                            last_error = "Timeout waiting for first data".to_string();
+                            retry_this_account = true;
+                            break;
                         }
                     }
+                }
 
-                    if retry_this_account {
-                        continue;
-                    }
+                if retry_this_account {
+                    continue;
+                }
 
-                    let combined_stream = futures::stream::once(async move {
-                        Ok::<Bytes, String>(first_data_chunk.unwrap())
-                    })
-                    .chain(openai_stream);
+                let combined_stream = futures::stream::once(async move {
+                    Ok::<Bytes, String>(first_data_chunk.unwrap())
+                })
+                .chain(passthrough_stream);
 
+                if client_wants_stream {
                     return Response::builder()
                         .header("Content-Type", "text/event-stream")
                         .header("Cache-Control", "no-cache")
@@ -1331,77 +1284,12 @@ pub async fn handle_completions(
                         .unwrap()
                         .into_response();
                 } else {
-                    // Forced Stream Internal -> Convert to Legacy JSON
-                    // Use CHAT SSE Stream (so Collector can parse it)
-                    use crate::proxy::mappers::openai::streaming::create_openai_sse_stream;
-                    // Note: We use create_openai_sse_stream regardless of is_codex_style here,
-                    // because we just want the content aggregation which chat stream does well.
-                    let mut openai_stream = create_openai_sse_stream(
-                        Box::pin(gemini_stream),
-                        openai_req.model.clone(),
-                        session_id,
-                        message_count,
-                    );
-
-                    // Peek Logic (Repeated for safety/correctness on this stream type)
-                    let mut first_data_chunk = None;
-                    let mut retry_this_account = false;
-                    loop {
-                        match tokio::time::timeout(
-                            std::time::Duration::from_secs(60),
-                            openai_stream.next(),
-                        )
-                        .await
-                        {
-                            Ok(Some(Ok(bytes))) => {
-                                if bytes.is_empty() {
-                                    continue;
-                                }
-                                let text = String::from_utf8_lossy(&bytes);
-                                if text.trim().starts_with(":")
-                                    || text.trim().starts_with("data: :")
-                                {
-                                    continue;
-                                }
-                                if text.contains("\"error\"") {
-                                    last_error = "Error event in internal stream".to_string();
-                                    retry_this_account = true;
-                                    break;
-                                }
-                                first_data_chunk = Some(bytes);
-                                break;
-                            }
-                            Ok(Some(Err(e))) => {
-                                last_error = format!("Internal stream error: {}", e);
-                                retry_this_account = true;
-                                break;
-                            }
-                            Ok(None) => {
-                                last_error = "Empty internal stream".to_string();
-                                retry_this_account = true;
-                                break;
-                            }
-                            Err(_) => {
-                                last_error = "Timeout peek internal".to_string();
-                                retry_this_account = true;
-                                break;
-                            }
-                        }
-                    }
-                    if retry_this_account {
-                        continue;
-                    }
-
-                    let combined_stream = futures::stream::once(async move {
-                        Ok::<Bytes, String>(first_data_chunk.unwrap())
-                    })
-                    .chain(openai_stream);
-
-                    // Collect
+                    // Forced stream internally -> Collect and return as JSON
+                    // Copilot SSE is already in OpenAI chat format
                     use crate::proxy::mappers::openai::collector::collect_stream_to_json;
                     match collect_stream_to_json(Box::pin(combined_stream)).await {
                         Ok(chat_resp) => {
-                            // NOW: Convert Chat Response -> Legacy Response (Same logic as below)
+                            // Convert Chat Response -> Legacy Completions Response
                             let choices = chat_resp.choices.iter().map(|c| {
                                 json!({
                                     "text": match &c.message.content {
@@ -1443,54 +1331,7 @@ pub async fn handle_completions(
                     }
                 }
             }
-
-            let gemini_resp: Value = match response.json().await {
-                Ok(json) => json,
-                Err(e) => {
-                    return (
-                        StatusCode::BAD_GATEWAY,
-                        [("X-Mapped-Model", mapped_model.as_str())],
-                        format!("Parse error: {}", e),
-                    )
-                        .into_response();
-                }
-            };
-
-            let chat_resp = transform_openai_response(&gemini_resp, Some("session-123"), 1);
-
-            // Map Chat Response -> Legacy Completions Response
-            let choices = chat_resp.choices.iter().map(|c| {
-                json!({
-                    "text": match &c.message.content {
-                        Some(crate::proxy::mappers::openai::OpenAIContent::String(s)) => s.clone(),
-                        _ => "".to_string()
-                    },
-                    "index": c.index,
-                    "logprobs": null,
-                    "finish_reason": c.finish_reason
-                })
-            }).collect::<Vec<_>>();
-
-            let legacy_resp = json!({
-                "id": chat_resp.id,
-                "object": "text_completion",
-                "created": chat_resp.created,
-                "model": chat_resp.model,
-                "choices": choices,
-                "usage": chat_resp.usage
-            });
-
-            return (
-                StatusCode::OK,
-                [
-                    ("X-Account-Email", email.as_str()),
-                    ("X-Mapped-Model", mapped_model.as_str()),
-                ],
-                Json(legacy_resp),
-            )
-                .into_response();
         }
-
         // Handle errors and retry
         let status_code = status.as_u16();
         let retry_after = response
@@ -1682,7 +1523,7 @@ pub async fn handle_images_generations(
 
             for attempt in 0..max_attempts {
                 // 4.1 获取 Token
-                let (access_token, project_id, email, account_id, _wait_ms) = match token_manager
+                let (copilot_token, _unused, email, account_id, _wait_ms) = match token_manager
                     .get_token("image_gen", attempt > 0, None, "gemini-3-pro-image")
                     .await
                 {
@@ -1698,37 +1539,33 @@ pub async fn handle_images_generations(
                 };
 
                 let gemini_body = json!({
-                    "project": project_id,
-                    "requestId": format!("agent-{}", uuid::Uuid::new_v4()),
                     "model": model_to_use,
-                    "userAgent": "antigravity",
-                    "requestType": "image_gen",
-                    "request": {
-                        "contents": [{
-                            "role": "user",
-                            "parts": [{"text": final_prompt}]
-                        }],
-                        "generationConfig": {
-                            "candidateCount": 1, // 强制单张
-                            "imageConfig": image_config // ✅ 使用完整配置（包含 aspectRatio 和 imageSize）
-                        },
-                        "safetySettings": [
-                            { "category": "HARM_CATEGORY_HARASSMENT", "threshold": "OFF" },
-                            { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF" },
-                            { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "OFF" },
-                            { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF" },
-                            { "category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "OFF" },
-                        ]
-                    }
+                    "contents": [{
+                        "role": "user",
+                        "parts": [{"text": final_prompt}]
+                    }],
+                    "generationConfig": {
+                        "candidateCount": 1,
+                        "imageConfig": image_config
+                    },
+                    "safetySettings": [
+                        { "category": "HARM_CATEGORY_HARASSMENT", "threshold": "OFF" },
+                        { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF" },
+                        { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "OFF" },
+                        { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF" },
+                        { "category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "OFF" },
+                    ]
                 });
 
                 match upstream
-                    .call_v1_internal(
-                        "generateContent",
-                        &access_token,
-                        gemini_body,
+                    .call_copilot(
+                        "/chat/completions",
+                        &copilot_token,
+                        Some(&gemini_body),
                         None,
-                        Some(account_id.as_str()),
+                        None,
+                        Some(&account_id),
+                        reqwest::Method::POST,
                     )
                     .await
                 {
@@ -2080,7 +1917,7 @@ pub async fn handle_images_edits(
 
             for attempt in 0..max_attempts {
                 // 4.1 获取 Token
-                let (access_token, project_id, email, account_id, _wait_ms) = match token_manager
+                let (copilot_token, _unused, email, account_id, _wait_ms) = match token_manager
                     .get_token("image_gen", attempt > 0, None, "gemini-3-pro-image")
                     .await
                 {
@@ -2097,42 +1934,38 @@ pub async fn handle_images_edits(
 
                 // 4.2 Construct Request Body (Need project_id)
                 let gemini_body = json!({
-                    "project": project_id,
-                    "requestId": format!("img-edit-{}", uuid::Uuid::new_v4()),
                     "model": model,
-                    "userAgent": "antigravity",
-                    "requestType": "image_gen",
-                    "request": {
-                        "contents": [{
-                            "role": "user",
-                            "parts": contents_parts
-                        }],
-                        "generationConfig": {
-                            "candidateCount": 1,
-                            "imageConfig": image_config,
-                            "maxOutputTokens": 8192,
-                            "stopSequences": [],
-                            "temperature": 1.0,
-                            "topP": 0.95,
-                            "topK": 40
-                        },
-                        "safetySettings": [
-                            { "category": "HARM_CATEGORY_HARASSMENT", "threshold": "OFF" },
-                            { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF" },
-                            { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "OFF" },
-                            { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF" },
-                            { "category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "OFF" },
-                        ]
-                    }
+                    "contents": [{
+                        "role": "user",
+                        "parts": contents_parts
+                    }],
+                    "generationConfig": {
+                        "candidateCount": 1,
+                        "imageConfig": image_config,
+                        "maxOutputTokens": 8192,
+                        "stopSequences": [],
+                        "temperature": 1.0,
+                        "topP": 0.95,
+                        "topK": 40
+                    },
+                    "safetySettings": [
+                        { "category": "HARM_CATEGORY_HARASSMENT", "threshold": "OFF" },
+                        { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF" },
+                        { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "OFF" },
+                        { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF" },
+                        { "category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "OFF" },
+                    ]
                 });
 
                 match upstream
-                    .call_v1_internal(
-                        "generateContent",
-                        &access_token,
-                        gemini_body,
+                    .call_copilot(
+                        "/chat/completions",
+                        &copilot_token,
+                        Some(&gemini_body),
                         None,
-                        Some(account_id.as_str()),
+                        None,
+                        Some(&account_id),
+                        reqwest::Method::POST,
                     )
                     .await
                 {

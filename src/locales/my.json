@@ -150,50 +150,7 @@
         "reset_time": "Masa Reset",
         "switch_to": "Tukar ke akaun ini",
         "actions": "Tindakan",
-        "device_fingerprint": "Cap Jari Peranti",
         "show_all_quotas": "Tunjukkan semua kuota",
-        "device_fingerprint_dialog": {
-            "title": "Cap Jari Peranti",
-            "operations": "Operasi Cap Jari Peranti",
-            "generate_and_bind": "Jana dan Ikat",
-            "restore_original": "Pulihkan Asal",
-            "open_storage_directory": "Buka Direktori Storan",
-            "current_storage": "Storan Semasa",
-            "effective": "Berkesan",
-            "current_storage_desc": "Dibaca dari storage.json (dikemas kini selepas menggunakan pengikatan semasa menukar akaun)",
-            "account_binding": "Pengikatan Akaun",
-            "pending_application": "Menunggu Penggunaan",
-            "account_binding_desc": "Disimpan sebagai pengikatan selepas penjanaan/pemulihan, ditulis ke storage.json semasa menukar akaun",
-            "historical_fingerprints": "Cap Jari Sejarah (pilihan pulih/padam)",
-            "no_history": "Tiada Sejarah",
-            "current": "Semasa",
-            "restore": "Pulihkan",
-            "delete_version": "Padam versi ini",
-            "confirm_generate_title": "Sahkan jana dan ikat?",
-            "confirm_generate_desc": "Akan menjana set cap jari peranti baharu dan ditetapkan sebagai cap jari semasa. Sahkan teruskan?",
-            "confirm_restore_title": "Sahkan pulihkan cap jari asal?",
-            "confirm_restore_desc": "Akan pulihkan ke cap jari asal dan tulis ganti cap jari semasa. Sahkan teruskan?",
-            "cancel": "Batal",
-            "confirm": "Sahkan",
-            "processing": "Memproses...",
-            "loading": "Memuatkan...",
-            "failed_to_load_device_info": "Gagal memuatkan maklumat peranti",
-            "generation_failed": "Penjanaan gagal",
-            "binding_failed": "Pengikatan gagal",
-            "restoration_failed": "Pemulihan gagal",
-            "deletion_failed": "Pemadaman gagal",
-            "directory_open_failed": "Tidak dapat membuka direktori",
-            "generated_and_bound": "Dijana dan diikat",
-            "restored": "Dipulihkan",
-            "deleted": "Dipadam",
-            "directory_opened": "Direktori storan dibuka",
-            "original_fingerprint_not_found": "Cap jari asal tidak ditemui"
-        },
-        "warmup_all": "Pemanasan Satu-klik",
-        "warmup_selected": "Pemanasan ({{count}})",
-        "warmup_this": "Pemanaskan akaun ini",
-        "warmup_now": "Pemanasan Sekarang",
-        "warmup_batch_triggered": "Tugas pemanasan dicetuskan untuk {{count}} akaun",
         "quota_protected": "Dilindungi",
         "details": {
             "title": "Butiran Kuota",
@@ -207,9 +164,9 @@
         "add": {
             "title": "Tambah Akaun",
             "tabs": {
-                "oauth": "OAuth",
-                "token": "Token Muat Semula",
-                "import": "Import DB"
+                "oauth": "Device Flow",
+                "token": "GitHub Token",
+                "import": "Import"
             },
             "oauth": {
                 "recommend": "Disyorkan",
@@ -255,6 +212,17 @@
             "oauth_error": "OAuth gagal: {{error}}",
             "status": {
                 "error_token": "Sila masukkan Token Muat Semula"
+            },
+            "device_flow": {
+                "title": "GitHub Device Flow Login",
+                "start": "Start GitHub Login",
+                "code_label": "Enter this code on GitHub:",
+                "open_github": "Open GitHub",
+                "waiting": "Waiting for authorization...",
+                "expires_in": "Expires in {{time}}",
+                "success": "Authorization successful!",
+                "expired": "Code expired. Please try again.",
+                "cancelled": "Login cancelled."
             }
         },
         "table": {
@@ -330,10 +298,6 @@
             "auto_sync": "Segerak Automatik Akaun Semasa",
             "auto_sync_desc": "Segerakkan maklumat akaun aktif semasa secara berkala secara automatik",
             "sync_interval": "Selang Segerak (saat)"
-        },
-        "warmup": {
-            "title": "Pemanasan Pintar",
-            "desc": "Memantau semua model secara automatik dan mencetuskan pemanasan dengan segera apabila kuota mencapai 100%, memastikan model sentiasa panas"
         },
         "quota_protection": {
             "title": "Perlindungan Kuota",

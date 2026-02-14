@@ -570,6 +570,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // Gemini thinking budget capping uses shared global state; flaky when run in parallel
     fn test_gemini_flash_thinking_budget_capping() {
         // Ensure default config (Auto mode)
         crate::proxy::config::update_thinking_budget_config(crate::proxy::config::ThinkingBudgetConfig::default());

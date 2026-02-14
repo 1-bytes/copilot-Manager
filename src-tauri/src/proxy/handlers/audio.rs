@@ -6,7 +6,6 @@ use axum::{
 };
 use serde_json::{json, Value};
 use tracing::{debug, info};
-use uuid::Uuid;
 
 use crate::proxy::{audio::AudioProcessor, server::AppState};
 
@@ -97,32 +96,27 @@ pub async fn handle_audio_transcription(
 
     // 6. 获取 Token 和上游客户端
     let token_manager = state.token_manager;
-    let (access_token, project_id, email, account_id, _wait_ms) = token_manager
+    let (copilot_token, _unused, email, account_id, _wait_ms) = token_manager
         .get_token("text", false, None, &model)
         .await
         .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, e))?;
 
     info!("使用账号: {}", email);
 
-    // 7. 包装请求为 v1internal 格式
-    let wrapped_body = json!({
-        "project": project_id,
-        "requestId": format!("audio-{}", Uuid::new_v4()),
-        "request": gemini_request,
-        "model": model,
-        "userAgent": "antigravity",
-        "requestType": "text"
-    });
+    // 7. Build request body for Copilot
+    let body = gemini_request;
 
-    // 8. 发送请求到 Gemini
+    // 8. 发送请求到 Copilot
     let upstream = state.upstream.clone();
     let response = upstream
-        .call_v1_internal(
-            "generateContent",
-            &access_token,
-            wrapped_body,
+        .call_copilot(
+            "/v1/audio/transcriptions",
+            &copilot_token,
+            Some(&body),
             None,
-            Some(account_id.as_str()),
+            None,
+            Some(&account_id),
+            reqwest::Method::POST,
         )
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, format!("上游请求失败: {}", e)))?
@@ -144,9 +138,8 @@ pub async fn handle_audio_transcription(
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, format!("解析响应失败: {}", e)))?;
 
-    // 9. 提取文本响应（解包 v1internal 响应）
-    let inner_response = result.get("response").unwrap_or(&result);
-    let text = inner_response
+    // 9. 提取文本响应
+    let text = result
         .get("candidates")
         .and_then(|c| c.get(0))
         .and_then(|c| c.get("content"))

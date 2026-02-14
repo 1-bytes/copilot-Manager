@@ -386,8 +386,8 @@ function AccountRowContent({
                         )}
 
                         {/* 订阅类型徽章 */}
-                        {account.quota?.subscription_tier && (() => {
-                            const tier = account.quota.subscription_tier.toLowerCase();
+                        {account.quota?.plan && (() => {
+                            const tier = account.quota.plan.toLowerCase();
                             if (tier.includes('ultra')) {
                                 return (
                                     <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-gradient-to-r from-purple-600 to-pink-600 text-white text-[10px] font-bold shadow-sm hover:scale-105 transition-transform cursor-default">

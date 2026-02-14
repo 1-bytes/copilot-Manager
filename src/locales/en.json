@@ -157,50 +157,7 @@
         "reset_time": "Reset Time",
         "switch_to": "Switch to this account",
         "actions": "Actions",
-        "device_fingerprint": "Device Fingerprint",
         "show_all_quotas": "Show All Quotas",
-        "device_fingerprint_dialog": {
-            "title": "Device Fingerprint",
-            "operations": "Device Fingerprint Operations",
-            "generate_and_bind": "Generate and Bind",
-            "restore_original": "Restore Original",
-            "open_storage_directory": "Open Storage Directory",
-            "current_storage": "Current Storage",
-            "effective": "Effective",
-            "current_storage_desc": "Read from storage.json (updated after applying binding when switching accounts)",
-            "account_binding": "Account Binding",
-            "pending_application": "Pending Application",
-            "account_binding_desc": "Saved as binding after generation/restoration, written to storage.json when switching accounts",
-            "historical_fingerprints": "Historical Fingerprints (optional restore/delete)",
-            "no_history": "No History",
-            "current": "Current",
-            "restore": "Restore",
-            "delete_version": "Delete this version",
-            "confirm_generate_title": "Confirm generate and bind?",
-            "confirm_generate_desc": "Will generate a new set of device fingerprints and set as current fingerprint. Confirm continue?",
-            "confirm_restore_title": "Confirm restore original fingerprint?",
-            "confirm_restore_desc": "Will restore to original fingerprint and overwrite current fingerprint. Confirm continue?",
-            "cancel": "Cancel",
-            "confirm": "Confirm",
-            "processing": "Processing...",
-            "loading": "Loading...",
-            "failed_to_load_device_info": "Failed to load device info",
-            "generation_failed": "Generation failed",
-            "binding_failed": "Binding failed",
-            "restoration_failed": "Restoration failed",
-            "deletion_failed": "Deletion failed",
-            "directory_open_failed": "Unable to open directory",
-            "generated_and_bound": "Generated and bound",
-            "restored": "Restored",
-            "deleted": "Deleted",
-            "directory_opened": "Storage directory opened",
-            "original_fingerprint_not_found": "Original fingerprint not found"
-        },
-        "warmup_all": "One-click Warmup",
-        "warmup_selected": "Warmup ({{count}})",
-        "warmup_this": "Warmup this account",
-        "warmup_now": "Warmup Now",
-        "warmup_batch_triggered": "Warmup tasks triggered for {{count}} accounts",
         "quota_protected": "Protected",
         "details": {
             "title": "Quota Details",
@@ -214,13 +171,13 @@
         "add": {
             "title": "Add Account",
             "tabs": {
-                "oauth": "OAuth",
-                "token": "Refresh Token",
-                "import": "Import DB"
+                "oauth": "Device Flow",
+                "token": "GitHub Token",
+                "import": "Import"
             },
             "oauth": {
                 "recommend": "Recommended",
-                "desc": "Opens default browser for Google login to auto-fetch and save Token.",
+                "desc": "Login via GitHub Device Flow. A code will be shown to enter on GitHub.",
                 "btn_start": "Start OAuth",
                 "btn_waiting": "Waiting for auth...",
                 "btn_finish": "I already authorized",
@@ -238,8 +195,8 @@
                 "manual_submitted": "Authorization code submitted. Backend is processing..."
             },
             "token": {
-                "label": "Refresh Token",
-                "placeholder": "Paste your Refresh Token here (Batch supported)\n\nSupported formats:\n1. Single Token (1//...)\n2. JSON Array (with refresh_token field)\n3. Any text containing tokens (Auto-extraction)",
+                "label": "GitHub Token",
+                "placeholder": "Paste your GitHub Personal Access Token (ghp_...)",
                 "hint": "Tip: You can paste multiple tokens or a JSON array to import in batch.",
                 "error_token": "Please enter Refresh Token",
                 "batch_progress": "Importing {{current}}/{{total}} accounts...",
@@ -248,13 +205,13 @@
                 "batch_fail": "Import failed"
             },
             "import": {
-                "scheme_a": "Plan A: From IDE DB",
-                "scheme_a_desc": "Auto-read current logged-in account from local Antigravity DB.",
-                "btn_db": "Import Current Account",
+                "scheme_a": "Plan A: Direct Import",
+                "scheme_a_desc": "Import account from a local configuration file.",
+                "btn_db": "Import Account",
                 "or": "OR",
-                "scheme_b": "Plan B: From V1 Backup",
-                "scheme_b_desc": "Scan ~/.antigravity-agent for V1 account data.",
-                "btn_v1": "Batch Import V1",
+                "scheme_b": "Plan B: From Backup",
+                "scheme_b_desc": "Scan for backup data and import accounts.",
+                "btn_v1": "Batch Import",
                 "btn_custom_db": "Import Custom DB"
             },
             "btn_cancel": "Cancel",
@@ -262,6 +219,17 @@
             "oauth_error": "OAuth failed: {{error}}",
             "status": {
                 "error_token": "Please enter Refresh Token"
+            },
+            "device_flow": {
+                "title": "GitHub Device Flow Login",
+                "start": "Start GitHub Login",
+                "code_label": "Enter this code on GitHub:",
+                "open_github": "Open GitHub",
+                "waiting": "Waiting for authorization...",
+                "expires_in": "Expires in {{time}}",
+                "success": "Authorization successful!",
+                "expired": "Code expired. Please try again.",
+                "cancelled": "Login cancelled."
             }
         },
         "table": {
@@ -337,10 +305,6 @@
             "auto_sync": "Auto Sync Current Account",
             "auto_sync_desc": "Automatically sync current active account information periodically",
             "sync_interval": "Sync Interval (minutes)"
-        },
-        "warmup": {
-            "title": "Smart Warmup",
-            "desc": "Automatically monitors all models and triggers warmup immediately when quota reaches 100%, keeping models warm"
         },
         "quota_protection": {
             "title": "Quota Protection",

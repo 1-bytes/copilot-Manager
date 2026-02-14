@@ -342,17 +342,6 @@ pub fn run() {
             commands::reorder_accounts,
             commands::switch_account,
             commands::export_accounts,
-            // Device fingerprint
-            commands::get_device_profiles,
-            commands::bind_device_profile,
-            commands::bind_device_profile_with_profile,
-            commands::preview_generate_profile,
-            commands::apply_device_profile,
-            commands::restore_original_device,
-            commands::list_device_versions,
-            commands::restore_device_version,
-            commands::delete_device_version,
-            commands::open_device_folder,
             commands::get_current_account,
             // Quota commands
             commands::fetch_account_quota,
@@ -360,16 +349,15 @@ pub fn run() {
             // Config commands
             commands::load_config,
             commands::save_config,
-            // Additional commands
-            commands::prepare_oauth_url,
-            commands::start_oauth_login,
-            commands::complete_oauth_login,
-            commands::cancel_oauth_login,
-            commands::submit_oauth_code,
-            commands::import_v1_accounts,
-            commands::import_from_db,
-            commands::import_custom_db,
-            commands::sync_account_from_db,
+            // Device Flow OAuth commands
+            commands::start_device_flow,
+            commands::complete_device_flow,
+            commands::cancel_device_flow,
+            commands::is_device_flow_active,
+            commands::get_device_flow_info,
+            // Import commands
+            commands::import_accounts,
+            // Utility commands
             commands::save_text_file,
             commands::read_text_file,
             commands::clear_log_cache,
@@ -379,8 +367,6 @@ pub fn run() {
             commands::get_data_dir_path,
             commands::show_main_window,
             commands::set_window_theme,
-            commands::get_antigravity_path,
-            commands::get_antigravity_args,
             commands::check_for_updates,
             commands::check_homebrew_installation,
             commands::brew_upgrade_cask,
@@ -426,9 +412,6 @@ pub fn run() {
             // Autostart commands
             commands::autostart::toggle_auto_launch,
             commands::autostart::is_auto_launch_enabled,
-            // Warmup commands
-            commands::warm_up_all_accounts,
-            commands::warm_up_account,
             commands::update_account_label,
             // HTTP API settings commands
             commands::get_http_api_settings,

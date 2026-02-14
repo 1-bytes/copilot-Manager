@@ -152,50 +152,7 @@
         "reset_time": "وقت إعادة التعيين",
         "switch_to": "التبديل لهذا الحساب",
         "actions": "إجراءات",
-        "device_fingerprint": "بصمة الجهاز",
         "show_all_quotas": "إظهار جميع الحصص",
-        "device_fingerprint_dialog": {
-            "title": "بصمة الجهاز",
-            "operations": "عمليات بصمة الجهاز",
-            "generate_and_bind": "توليد وربط",
-            "restore_original": "استعادة الأصل",
-            "open_storage_directory": "فتح دليل التخزين",
-            "current_storage": "التخزين الحالي",
-            "effective": "فعال",
-            "current_storage_desc": "قراءة من storage.json (يتم التحديث بعد تطبيق الربط عند تبديل الحسابات)",
-            "account_binding": "ربط الحساب",
-            "pending_application": "في انتظار التطبيق",
-            "account_binding_desc": "تم الحفظ كربط بعد التوليد/الاستعادة، يكتب إلى storage.json عند تبديل الحسابات",
-            "historical_fingerprints": "بصمات تاريخية (استعادة/حذف اختياري)",
-            "no_history": "لا يوجد سجل",
-            "current": "الحالي",
-            "restore": "استعادة",
-            "delete_version": "حذف هذه النسخة",
-            "confirm_generate_title": "تأكيد التوليد والربط؟",
-            "confirm_generate_desc": "سيتم توليد مجموعة جديدة من بصمات الجهاز وتعيينها كبصمة حالية. هل تريد الاستمرار؟",
-            "confirm_restore_title": "تأكيد استعادة البصمة الأصلية؟",
-            "confirm_restore_desc": "سيتم استعادة البصمة الأصلية واستبدال البصمة الحالية. هل تريد الاستمرار؟",
-            "cancel": "إلغاء",
-            "confirm": "تأكيد",
-            "processing": "جاري المعالجة...",
-            "loading": "جاري التحميل...",
-            "failed_to_load_device_info": "فشل تحميل معلومات الجهاز",
-            "generation_failed": "فشل التوليد",
-            "binding_failed": "فشل الربط",
-            "restoration_failed": "فشل الاستعادة",
-            "deletion_failed": "فشل الحذف",
-            "directory_open_failed": "تعذر فتح المجلد",
-            "generated_and_bound": "تم التوليد والربط",
-            "restored": "تمت الاستعادة",
-            "deleted": "تم الحذف",
-            "directory_opened": "تم فتح مجلد التخزين",
-            "original_fingerprint_not_found": "البصمة الأصلية غير موجودة"
-        },
-        "warmup_all": "تنشيط بنقرة واحدة",
-        "warmup_selected": "تنشيط ({{count}})",
-        "warmup_this": "تنشيط هذا الحساب",
-        "warmup_now": "تنشيط الآن",
-        "warmup_batch_triggered": "تم إطلاق مهام التنشيط لـ {{count}} حساب",
         "quota_protected": "محمي",
         "details": {
             "title": "تفاصيل الحصة",
@@ -209,9 +166,9 @@
         "add": {
             "title": "إضافة حساب",
             "tabs": {
-                "oauth": "OAuth",
-                "token": "Refresh Token",
-                "import": "استيراد DB"
+                "oauth": "Device Flow",
+                "token": "GitHub Token",
+                "import": "Import"
             },
             "oauth": {
                 "recommend": "موصى به",
@@ -257,6 +214,17 @@
             "oauth_error": "فشل OAuth: {{error}}",
             "status": {
                 "error_token": "يرجى إدخال Refresh Token"
+            },
+            "device_flow": {
+                "title": "GitHub Device Flow Login",
+                "start": "Start GitHub Login",
+                "code_label": "Enter this code on GitHub:",
+                "open_github": "Open GitHub",
+                "waiting": "Waiting for authorization...",
+                "expires_in": "Expires in {{time}}",
+                "success": "Authorization successful!",
+                "expired": "Code expired. Please try again.",
+                "cancelled": "Login cancelled."
             }
         },
         "table": {
@@ -332,10 +300,6 @@
             "auto_sync": "مزامنة تلقائية للحساب الحالي",
             "auto_sync_desc": "مزامنة معلومات الحساب النشط الحالي بشكل دوري",
             "sync_interval": "فاصل المزامنة (ثواني)"
-        },
-        "warmup": {
-            "title": "تنشيط ذكي",
-            "desc": "يراقب جميع النماذج تلقائيًا ويطلق التنشيط فورًا عندما تصل الحصة إلى 100%، مما يبقي النماذج نشطة"
         },
         "quota_protection": {
             "title": "حماية الحصة",

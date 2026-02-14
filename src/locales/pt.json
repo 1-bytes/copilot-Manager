@@ -146,50 +146,7 @@
         "reset_time": "Tempo de Reset",
         "switch_to": "Alternar para esta conta",
         "actions": "Ações",
-        "device_fingerprint": "Impressão Digital do Dispositivo",
         "show_all_quotas": "Mostrar todas as cotas",
-        "device_fingerprint_dialog": {
-            "title": "Impressão Digital do Dispositivo",
-            "operations": "Operações de Impressão Digital do Dispositivo",
-            "generate_and_bind": "Gerar e Vincular",
-            "restore_original": "Restaurar Original",
-            "open_storage_directory": "Abrir Diretório de Armazenamento",
-            "current_storage": "Armazenamento Atual",
-            "effective": "Efetivo",
-            "current_storage_desc": "Lido do storage.json (atualizado após aplicar vinculação ao trocar contas)",
-            "account_binding": "Vinculação de Conta",
-            "pending_application": "Aplicação Pendente",
-            "account_binding_desc": "Salvo como vinculação após geração/restauração, escrito no storage.json ao trocar contas",
-            "historical_fingerprints": "Impressões Digitais Históricas (restauração/exclusão opcional)",
-            "no_history": "Sem Histórico",
-            "current": "Atual",
-            "restore": "Restaurar",
-            "delete_version": "Excluir esta versão",
-            "confirm_generate_title": "Confirmar gerar e vincular?",
-            "confirm_generate_desc": "Gerará um novo conjunto de impressões digitais do dispositivo e definirá como impressão atual. Confirmar continuação?",
-            "confirm_restore_title": "Confirmar restaurar impressão digital original?",
-            "confirm_restore_desc": "Restaurará a impressão digital original e sobrescreverá a impressão atual. Confirmar continuação?",
-            "cancel": "Cancelar",
-            "confirm": "Confirmar",
-            "processing": "Processando...",
-            "loading": "Carregando...",
-            "failed_to_load_device_info": "Falha ao carregar informações do dispositivo",
-            "generation_failed": "Falha na geração",
-            "binding_failed": "Falha na vinculação",
-            "restoration_failed": "Falha na restauração",
-            "deletion_failed": "Falha na exclusão",
-            "directory_open_failed": "Não foi possível abrir o diretório",
-            "generated_and_bound": "Gerado e vinculado",
-            "restored": "Restaurado",
-            "deleted": "Excluído",
-            "directory_opened": "Diretório de armazenamento aberto",
-            "original_fingerprint_not_found": "Impressão digital original não encontrada"
-        },
-        "warmup_all": "Aquecimento com Um Clique",
-        "warmup_selected": "Aquecer ({{count}})",
-        "warmup_this": "Aquecer esta conta",
-        "warmup_now": "Aquecer Agora",
-        "warmup_batch_triggered": "Tarefas de aquecimento acionadas para {{count}} contas",
         "quota_protected": "Protegido",
         "details": {
             "title": "Detalhes da Cota",
@@ -203,9 +160,9 @@
         "add": {
             "title": "Adicionar Conta",
             "tabs": {
-                "oauth": "OAuth",
-                "token": "Refresh Token",
-                "import": "Importar DB"
+                "oauth": "Device Flow",
+                "token": "GitHub Token",
+                "import": "Import"
             },
             "oauth": {
                 "recommend": "Recomendado",
@@ -251,6 +208,17 @@
             "oauth_error": "OAuth falhou: {{error}}",
             "status": {
                 "error_token": "Por favor, insira o Refresh Token"
+            },
+            "device_flow": {
+                "title": "GitHub Device Flow Login",
+                "start": "Start GitHub Login",
+                "code_label": "Enter this code on GitHub:",
+                "open_github": "Open GitHub",
+                "waiting": "Waiting for authorization...",
+                "expires_in": "Expires in {{time}}",
+                "success": "Authorization successful!",
+                "expired": "Code expired. Please try again.",
+                "cancelled": "Login cancelled."
             }
         },
         "table": {
@@ -326,10 +294,6 @@
             "auto_sync": "Sincronização Automática da Conta Atual",
             "auto_sync_desc": "Sincronizar automaticamente as informações da conta ativa atual periodicamente",
             "sync_interval": "Intervalo de Sincronização (segundos)"
-        },
-        "warmup": {
-            "title": "Aquecimento Inteligente",
-            "desc": "Monitora automaticamente todos os modelos e aciona o aquecimento imediatamente quando a cota atinge 100%, mantendo os modelos aquecidos"
         },
         "quota_protection": {
             "title": "Proteção de Cota",
