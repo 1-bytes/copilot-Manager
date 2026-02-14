@@ -1,5 +1,5 @@
 {
-  "version": "4.1.17",
+  "version": "5.0.1",
   "name": "copilot-manager",
   "type": "module",
   "private": true,
